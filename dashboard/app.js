@@ -160,7 +160,7 @@
   }
   function renderSide(sec) {
     var c = counts(), oldNav = $('#side .nav'), sl = oldNav ? oldNav.scrollLeft : 0; // nav digeser Kevin: jangan kembali ke awal
-    $('#side').innerHTML = '<div class="brand"><img class="logo-full" src="../assets/logo/logo.svg" alt="DavidStore" height="32"><img class="logo-mark" src="../assets/logo/mark.svg" alt="DavidStore" height="32"><small>Dashboard David</small><span class="hdr-sync">' + syncBadge() + '</span></div><div class="nav">' +
+    $('#side').innerHTML = '<div class="brand"><img class="logo-full" src="../assets/logo/logo.svg" alt="DStore" height="32"><img class="logo-mark" src="../assets/logo/icon.svg" alt="DStore" height="32"><small>Dashboard David</small><span class="hdr-sync">' + syncBadge() + '</span></div><div class="nav">' +
       NAV.map(function (n) {
         var k = c[n[0] === 'pesanan' ? 'orders' : n[0] === 'po' ? 'po' : ''];
         return '<a href="#/' + n[0] + '"' + (n[0] === sec ? ' aria-current="page"' : '') + '>' + ic(n[2]) + '<span>' + n[1] + '</span>' + (k ? '<span class="cnt" aria-label="' + k + ' perlu tindakan">' + k + '</span>' : '') + '</a>';
@@ -223,7 +223,7 @@
     }
     var m = $('#main'); m.innerHTML = '<div class="fade">' + html + '</div>';
     renderSide(sec);
-    document.title = 'Dashboard David — DavidStore';
+    document.title = 'Dashboard David — DStore';
     if (sec === 'pesanan' && r[2] === 'harga') bindQuote();
     if (sec === 'pengaturan') mountSync();
     hydrateProofs();

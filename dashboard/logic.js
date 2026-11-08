@@ -548,7 +548,7 @@
   function dist(id) { return DS.getDistributors().filter(function (x) { return x.id === id; })[0] || { id: id, name: id, wa: '' }; }
   function poText(po) { // tidak memuat data customer (R7)
     var s = DS.getSettings();
-    var lines = ['Halo ' + dist(po.distributor_id).name + ', saya David (DavidStore). Mohon cek ketersediaan dan harga:', '', 'Kode PO: ' + po.id, ''];
+    var lines = ['Halo ' + dist(po.distributor_id).name + ', saya David (DStore). Mohon cek ketersediaan dan harga:', '', 'Kode PO: ' + po.id, ''];
     po.items.filter(function (x) { return !x.superseded; }).forEach(function (pi, i) {
       lines.push((i + 1) + '. ' + pi.name + (pi.variant ? ' — ' + pi.variant : '') + ' × ' + pi.qty);
     });
@@ -572,11 +572,11 @@
     return base + '#/lacak?id=' + encodeURIComponent(order.id) + '&wa=' + encodeURIComponent((order.customer && order.customer.wa) || '') + '&k=' + encodeURIComponent(order.track_key);
   }
   function trackText(order) {
-    return 'Halo ' + order.customer.name.replace(/ \(CONTOH\)/, '') + ', ini tautan untuk memantau pesanan ' + order.id + ' dari DavidStore (status, bayar, unggah bukti):\n' + statusLink(order);
+    return 'Halo ' + order.customer.name.replace(/ \(CONTOH\)/, '') + ', ini tautan untuk memantau pesanan ' + order.id + ' dari DStore (status, bayar, unggah bukti):\n' + statusLink(order);
   }
   function quoteText(order) {
     var t = totals(order), s = DS.getSettings();
-    var lines = ['Halo ' + order.customer.name.replace(/ \(CONTOH\)/, '') + ', harga final pesanan ' + order.id + ' dari DavidStore:', ''];
+    var lines = ['Halo ' + order.customer.name.replace(/ \(CONTOH\)/, '') + ', harga final pesanan ' + order.id + ' dari DStore:', ''];
     order.items.filter(isBillable).forEach(function (it, i) {
       lines.push((i + 1) + '. ' + (it.brand ? it.brand + ' ' : '') + it.name + (it.variant ? ' — ' + it.variant : '') + ' × ' + it.qty + ' = ' + DS.formatRupiah(it.final_price * it.qty));
     });
@@ -590,9 +590,9 @@
   function shipText(order) {
     if (isSelf(order.shipment)) {
       var nt = String(order.shipment.note || '').trim();
-      return 'Halo ' + order.customer.name.replace(/ \(CONTOH\)/, '') + ', pesanan ' + order.id + ' sedang diantar langsung oleh David.' + (nt ? ' Perkiraan tiba: ' + nt + '.' : '') + (statusLink(order) ? '\nLacak pesanan: ' + statusLink(order) : '') + '\nTerima kasih sudah belanja di DavidStore.';
+      return 'Halo ' + order.customer.name.replace(/ \(CONTOH\)/, '') + ', pesanan ' + order.id + ' sedang diantar langsung oleh David.' + (nt ? ' Perkiraan tiba: ' + nt + '.' : '') + (statusLink(order) ? '\nLacak pesanan: ' + statusLink(order) : '') + '\nTerima kasih sudah belanja di DStore.';
     }
-    return 'Halo ' + order.customer.name.replace(/ \(CONTOH\)/, '') + ', pesanan ' + order.id + ' sudah dikirim via ' + order.shipment.courier + ', resi ' + order.shipment.resi + '. Terima kasih sudah belanja di DavidStore.';
+    return 'Halo ' + order.customer.name.replace(/ \(CONTOH\)/, '') + ', pesanan ' + order.id + ' sudah dikirim via ' + order.shipment.courier + ', resi ' + order.shipment.resi + '. Terima kasih sudah belanja di DStore.';
   }
 
   // ---------- "Perlu tindakan" (ADM-02): tiap pesanan aktif tepat satu baris ----------

@@ -209,14 +209,14 @@
     $('#shell').innerHTML =
       '<header class="site-header" id="hdr"><div class="container site-header__in">' +
       '<button class="icon-btn menu-btn" id="btnMenu" aria-label="Buka menu" type="button">' + ico('menu') + '</button>' +
-      '<a class="logo" href="#/" aria-label="DavidStore, ke beranda"><img class="logo__img logo__img--solid" src="../assets/logo/logo.svg" alt="DavidStore" height="28"><img class="logo__img logo__img--clear" src="../assets/logo/logo-inverse.svg" alt="" aria-hidden="true" height="28"></a>' +
+      '<a class="logo" href="#/" aria-label="DStore, ke beranda"><img class="logo__img logo__img--solid" src="../assets/logo/logo.svg" alt="DStore" height="28"><img class="logo__img logo__img--clear" src="../assets/logo/logo-inverse.svg" alt="" aria-hidden="true" height="28"></a>' +
       '<nav class="nav" id="mainNav" aria-label="Kategori"></nav>' +
       '<form class="search-inline" id="searchInline" role="search"><label class="sr-only" for="qi">Cari produk</label>' + ico('search') + '<input id="qi" type="search" placeholder="Cari blade, karet, brand…" autocomplete="off"></form>' +
       '<button class="icon-btn search-btn" id="btnSearch" aria-label="Cari" type="button">' + ico('search') + '</button>' +
       '<button class="icon-btn" id="btnCart" type="button" aria-label="Keranjang">' + ico('bag') + '<span class="cart-badge" id="badge" hidden aria-live="polite">0</span></button>' +
       '</div></header>';
     $('#footer').innerHTML =
-      '<footer class="site-footer"><div class="container"><div><a class="flogo" href="#/"><img src="../assets/logo/logo-inverse.svg" alt="DavidStore" height="28"></a><p>Peralatan tenis meja. Harga estimasi dikonfirmasi setelah cek ketersediaan ke distributor.</p></div>' +
+      '<footer class="site-footer"><div class="container"><div><a class="flogo" href="#/"><img src="../assets/logo/logo-inverse.svg" alt="DStore" height="28"></a><p>Peralatan tenis meja. Harga estimasi dikonfirmasi setelah cek ketersediaan ke distributor.</p></div>' +
       '<div><h4>Belanja</h4><div id="footCats"></div><div><a href="#/rakit">Rakit Bet</a></div></div>' +
       '<div><h4>Bantuan</h4><div><a href="#/lacak">Lacak Pesanan</a></div><div id="footWa"></div></div>' +
       '<div id="footStore"></div></div><div class="container site-footer__sync" id="syncBadge"></div></footer>';
@@ -384,7 +384,7 @@
     hideNoWa(app);
     initReveal(app);
     window.scrollTo(0, 0);
-    document.title = (document.title.split(' — ')[0] === 'DavidStore' ? '' : '') + 'DavidStore — Peralatan Tenis Meja';
+    document.title = (document.title.split(' — ')[0] === 'DStore' ? '' : '') + 'DStore — Peralatan Tenis Meja';
   }
   function navigate(hash, replace) {
     if (replace) { history.replaceState(null, '', hash); route2(); } else location.hash = hash;
@@ -424,7 +424,7 @@
       (tiles.length ? '<section class="section"><div class="container"><div class="section__head"><h2>Belanja per kategori</h2></div><div class="bento">' +
       tiles.map(function (t, i) { return '<a class="tile ' + t[2] + '" href="' + navHref(t[0]) + '" data-reveal style="--i:' + i + '"><div class="art"><svg viewBox="0 0 120 120" stroke-linecap="round" stroke-linejoin="round">' + (PH[t[0] === 'rakit' ? 'rakit' : t[0]]) + '</svg></div><h3>' + t[1] + '</h3>' + (t[3] ? '<small>' + t[3] + '</small>' : '') + '</a>'; }).join('') +
       '</div></div></section>' : '') +
-      '<section class="section" style="padding-top:0"><div class="container"><div class="section__head"><h2>Cara pesan di DavidStore</h2></div><div class="steps">' +
+      '<section class="section" style="padding-top:0"><div class="container"><div class="section__head"><h2>Cara pesan di DStore</h2></div><div class="steps">' +
       steps.map(function (s, i) { return '<div class="step" data-reveal style="--i:' + i + '"><b>' + (i + 1) + '</b><div><h3>' + s[0] + '</h3><p>' + s[1] + '</p></div></div>'; }).join('') + '</div>' +
       '<p class="hint" style="margin-top:16px">David tidak menyimpan stok. Setiap pesanan dicek dulu ke distributor, jadi Anda tidak membayar sebelum ketersediaan jelas.</p></div></section>' +
       (feat.length ? '<section class="section" style="padding-top:0"><div class="container"><div class="section__head"><h2>Produk terbaru</h2><a class="btn btn--text" href="#/katalog">Lihat semua</a></div><div class="feat-grid">' +
