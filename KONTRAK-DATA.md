@@ -51,7 +51,9 @@ Kegagalan jaringan mengembalikan `{ok:false, network:true}`; **tidak pernah** me
 
 - `DS.pub.track(id, wa, k)` dan `DS.pub.action(id, wa, k, action, extra)`: `k` = `track_key` (32 hex) dari server; tanpa itu Lacak dan aksi ditolak. `createOrder` mengembalikan `track_key`. Tautan Lacak: `#/lacak?id=&wa=&k=`.
 - `payment_proof` menerima `file_b64` (JPEG/PNG ≤ 1 MB setelah dikecilkan, PDF ≤ 5 MB), disimpan di Google Drive pribadi; json pesanan menyimpan `payment.proof_file_id/proof_mime/proof_name/amount/uploaded_at`. Admin: `DS.sync.proofGet(orderId)` (POST, token di badan).
-- Op admin (`ping`, `pull`, `upsert`, `setup`, `proof_get`, `track_key_ensure`) hanya POST.
+- Op admin (`ping`, `pull`, `upsert`, `setup`, `proof_get`, `track_key_ensure`, `delivery_proof_upload`, `delivery_proof_get`) hanya POST.
+- ADM-24 `delivery_proof_upload {id, file_b64, receiver_name?, note?}` (token): pesanan harus `shipped`; isi berkas dicek (JPEG/PNG/PDF, foto <= 1 MB, PDF <= 5 MB); berkas privat di folder Drive bukti transfer (`ST-<id>-<waktu>.<ext>`); server menetapkan status `completed`, `shipment.delivery`, entri history (`by:'david'`), `updated_at`. Hasil `{ok, id, status:'completed', updated_at}`; gagal `{ok:false, error: not_allowed|invalid_input|delivery_proof_required|not_found, message}`. `delivery_proof_get {id}` -> `{ok, mime, base64}` (setara `proof_get` dengan `kind:'delivery'`). Klien: `DS.sync.deliveryUpload(id, b64, receiver, note)`, `DS.sync.deliveryGet(id)`.
+- `upsert` tab `orders` menolak (`invalid`, reason `delivery_proof_required`) status `completed` tanpa `shipment.delivery.file_id` yang sama dengan yang sudah ada di sheet (pesanan lama yang sudah completed tanpa foto tetap boleh disimpan ulang), dan menolak perubahan/penghapusan `delivery.file_id`. `customerView_` tidak memuat `delivery` (file_id, penerima, catatan).
 - `DS_CATALOG.store = {address, wa, hours}` dari `op=catalog` (kunci settings publik: `assembly_fee`, `address`, `david_wa`, `store_hours`). Kosong = baris disembunyikan di toko.
 - Sinkron: kirim (`flush`) dan tarik (`pull`) diserialkan (`exclusive`) supaya data sheet lama tidak menimpa perubahan lokal. `A.restorePo(poId)` memulihkan PO yang terbatal otomatis; `L.inconsistency(order, pos)` mendeteksi pesanan Lunas tanpa PO aktif.
 
@@ -92,7 +94,9 @@ Order = {
   shipping_fee: null,              // diisi David saat quoted
   pay_deadline: null,              // ISO, saat quoted (+24 jam)
   payment: { status: "none" },     // none | pending_verification | verified | rejected ; proof_name?
-  shipment: null,                  // { courier, resi }
+  shipment: null,                  // { courier, resi, method?, shipped_at?, delivery? }
+                                   // delivery (ADM-24, diisi SERVER saat selesai): { file_id, mime, receiver_name, note, at }
+                                   //   mode lokal: { data_url (<= ~400 KB), mime, receiver_name, note, at } tanpa file_id
   history: [{ at, status, by, note }]
 }
 

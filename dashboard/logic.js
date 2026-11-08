@@ -485,10 +485,19 @@
     save(d); return { ok: true };
   };
 
-  A.complete = function (orderId) {
+  // ADM-24: selesai HANYA dengan foto serah terima. delivery = { data_url|file_id, mime, receiver_name, note }.
+  A.complete = function (orderId, delivery) {
     var d = load(), o = findOrder(d, orderId);
     if (!o || o.status !== 'shipped') return fail('Hanya pesanan Dikirim yang bisa diselesaikan.');
-    o.status = 'completed'; addHist(o, 'Customer konfirmasi terima (simulasi)');
+    delivery = delivery || {};
+    if (!delivery.file_id && !delivery.data_url) return fail('Foto serah terima wajib diunggah.');
+    var rn = String(delivery.receiver_name || '').trim(), nt = String(delivery.note || '').trim();
+    if (rn.length > 80) return fail('Nama penerima maksimal 80 huruf.');
+    if (nt.length > 200) return fail('Catatan maksimal 200 huruf.');
+    if (!o.shipment) o.shipment = {};
+    o.shipment.delivery = { mime: delivery.mime || '', receiver_name: rn, note: nt, at: nowIso() };
+    if (delivery.file_id) o.shipment.delivery.file_id = delivery.file_id; else o.shipment.delivery.data_url = delivery.data_url;
+    o.status = 'completed'; addHist(o, 'Selesai: foto serah terima diunggah');
     save(d); return { ok: true };
   };
 
@@ -617,7 +626,10 @@
       return r('wait', 'Menunggu barang dari distributor', since, 'tunggu');
     }
     if (st === 'received') return r('action', 'Barang siap dikirim ke customer', since, 'kirim');
-    if (st === 'shipped') return r('wait', 'Dikirim — menunggu customer menerima', since, 'tunggu');
+    if (st === 'shipped') { // ADM-24: tidak ada auto-selesai; David wajib unggah foto serah terima. Umur dihitung dari waktu dikirim.
+      var hs = (order.history || []).filter(function (h) { return h.status === 'shipped'; }).pop();
+      return r('action', 'Dikirim, belum diselesaikan — unggah foto serah terima', ms(order.shipment && order.shipment.shipped_at) || ms(hs && hs.at) || since, 'dikirim');
+    }
     return null;
   }
 
@@ -632,7 +644,7 @@
   var ACCEPTED = ['accepted', 'received', 'shipped'];                         // status item terhitung
   var ACTIVE = ['placed', 'sourcing', 'quoted', 'paid', 'fulfilling', 'received', 'shipped'];
   var DAY = 24 * HR, WIB_OFF = 7 * HR;
-  var ACTION_GROUPS = ['baru', 'po', 'harga', 'bayar', 'konfirmasi', 'kirim'];
+  var ACTION_GROUPS = ['baru', 'po', 'harga', 'bayar', 'konfirmasi', 'kirim', 'dikirim'];
   var MONTHS_ID = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
 
   function wibParts(t) { var d = new Date(t + WIB_OFF); return { y: d.getUTCFullYear(), m: d.getUTCMonth(), d: d.getUTCDate() }; }

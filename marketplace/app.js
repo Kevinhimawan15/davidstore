@@ -883,6 +883,7 @@
       if (i === cur && !dead) {
         extra = '<div class="stp__now">' + esc(s[2]) + '</div>';
         if (s[0] === 'shipped' && o.shipment) extra += '<div class="stp__now">' + (o.shipment.resi ? esc(o.shipment.courier || '') + ' · resi <span class="mono">' + esc(o.shipment.resi) + '</span> <button class="btn btn--text" type="button" data-copy="' + esc(o.shipment.resi) + '">' + ico('copy') + 'Salin</button>' : esc(o.shipment.courier || '')) + '</div>';
+        if (s[0] === 'completed') extra = '<div class="stp__now">Pesanan selesai — diterima ' + fmtDate(hist ? hist.at : o.updated_at) + '</div>';
         if (s[0] === 'received') extra += '<div class="stp__now">Status: barang sudah di David.</div>';
       }
       return '<li class="stp ' + cls + '" style="--k:' + i + '"' + (cls === 'now' ? ' aria-current="step"' : '') + '><span class="stp__dot">' + (cls === 'done' || cls === 'now' ? ico('check') : '') + '</span><div class="stp__label">' + s[1] + '</div>' + (hist ? '<div class="stp__time num">' + fmtDate(hist.at) + ' · ' + fmtTime(hist.at) + '</div>' : '') + extra + '</li>';

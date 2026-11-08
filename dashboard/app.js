@@ -236,7 +236,7 @@
   }
 
   // ---------- Beranda (ADM-22) ----------
-  var GROUP_LABEL = { baru: 'Order baru', po: 'PO perlu ditindak', harga: 'Siap susun harga final', bayar: 'Bukti bayar menunggu verifikasi', konfirmasi: 'Lunas, belum dikonfirmasi ke distributor', kirim: 'Barang siap kirim' };
+  var GROUP_LABEL = { baru: 'Order baru', po: 'PO perlu ditindak', harga: 'Siap susun harga final', bayar: 'Bukti bayar menunggu verifikasi', konfirmasi: 'Lunas, belum dikonfirmasi ke distributor', kirim: 'Barang siap kirim', dikirim: 'Dikirim, belum diselesaikan' };
   var bPeriod = { kind: 'month', ym: '' };
   var ordersGroup = '';
 
@@ -523,11 +523,11 @@
       nextHtml += rak.map(function (i) { return '<label class="radiorow" style="min-height:56px"><input type="checkbox" data-act="assembly" data-id="' + esc(id) + '" data-line="' + i.line_id + '"' + (o.assembly && o.assembly[i.line_id] ? ' checked' : '') + '> Sudah dirakit: ' + esc(itemLabel(i)) + '</label>'; }).join('') +
         '<div class="row"><button class="btn" data-act="ship" data-id="' + esc(id) + '">' + ic('truck') + 'Tandai dikirim</button></div>';
     } else if (st === 'shipped') {
-      nextHtml += '<p>' + shipInfo(o) + '</p><div class="row"><button class="btn sec" data-act="ship-wa" data-id="' + esc(id) + '">' + (L.isSelfShip(o.shipment) ? 'Kabari customer via WA' : 'Kirim resi via WA') + '</button><button class="btn text" data-act="complete" data-id="' + esc(id) + '">Demo: tandai selesai (customer konfirmasi)</button></div>';
+      nextHtml += '<p>' + shipInfo(o) + '</p><div class="row"><button class="btn sec" data-act="ship-wa" data-id="' + esc(id) + '">' + (L.isSelfShip(o.shipment) ? 'Kabari customer via WA' : 'Kirim resi via WA') + '</button><button class="btn" data-act="complete" data-id="' + esc(id) + '">' + ic('check-circle') + 'Selesaikan pesanan</button></div>';
     } else if (st === 'cancelled' || st === 'expired') {
       nextHtml += '<p class="muted">' + (st === 'cancelled' ? 'Dibatalkan: ' + esc(o.cancel_reason || '') : 'Batas bayar lewat tanpa bukti.') + '</p>' +
         (o.refund ? note(o.refund.status === 'perlu_ditransfer' ? 'bad' : 'ok', 'wallet', '<b>Refund ' + rp(o.refund.amount) + ':</b> ' + (o.refund.status === 'perlu_ditransfer' ? 'perlu ditransfer ke customer.' : 'sudah ditransfer.')) + (o.refund.status === 'perlu_ditransfer' ? '<button class="btn" data-act="refund-done" data-id="' + esc(id) + '">Tandai refund sudah ditransfer</button>' : '') : '');
-    } else nextHtml += '<p class="muted">Tidak ada tindakan lagi.</p>';
+    } else nextHtml += '<p class="muted">Tidak ada tindakan lagi.</p>' + (st === 'completed' ? deliveryCard(o) : '');
     var inc = L.inconsistency(o, d.pos);
     if (inc) nextHtml = '<div class="note bad" role="alert">' + ic('alert') + '<div><b>Data PO tidak konsisten.</b> Pesanan berstatus ' + esc(OST[st] ? OST[st][0] : st) + ', tetapi tidak ada PO aktif yang menutupi: ' + esc(inc.lines.join(', ')) + '. ' + (inc.cancelled.length ? 'PO terbatal otomatis bisa dipulihkan: ' + inc.cancelled.map(function (pid) { return '<button class="btn sm" data-act="restore-po" data-id="' + esc(pid) + '">Pulihkan ' + esc(pid) + '</button>'; }).join(' ') : 'Buat PO baru atau hubungi Kevin.') + '</div></div>' + nextHtml;
 
@@ -858,7 +858,99 @@
       if (!proofCache[f]) loadProof(oid, f);
       el.innerHTML = proofHtml(proofCache[f], oid, f, th);
     });
+    $$('[data-deliv-order]').forEach(function (el) {
+      var oid = el.getAttribute('data-deliv-order'), o = orderById(oid), dl = o && o.shipment && o.shipment.delivery; if (!dl) return;
+      var c = dl.data_url ? { state: 'ok', kind: /^data:application\/pdf/.test(dl.data_url) ? 'pdf' : 'img', url: dl.data_url } : delivLoad(oid, dl.file_id);
+      el.innerHTML = delivHtml(c, oid);
+    });
     if (!$('.pbox') && $('#lightbox')) closeLightbox();
+  }
+  // ---------- Serah terima (ADM-24): foto wajib sebelum Selesai. Sheet: file di Drive via delivery_proof_get; lokal: data URL terkompres ----------
+  var delivCache = {}; // orderId -> { state, kind, url, msg }
+  function delivLoad(oid, fileId) {
+    var c = delivCache[oid]; if (c && c.fid === fileId) return c;
+    c = delivCache[oid] = { state: 'loading', fid: fileId };
+    DS.sync.deliveryGet(oid).then(function (res) {
+      if (!res.ok) { c.state = 'err'; c.msg = res.message || 'Gagal memuat.'; }
+      else if (res.mime === 'application/pdf') { c.state = 'ok'; c.kind = 'pdf'; c.url = 'data:application/pdf;base64,' + res.base64; }
+      else if (res.mime === 'image/jpeg' || res.mime === 'image/png') { c.state = 'ok'; c.kind = 'img'; c.url = 'data:' + res.mime + ';base64,' + res.base64; }
+      else { c.state = 'err'; c.msg = 'Jenis berkas tidak dikenal.'; }
+      hydrateProofs();
+    });
+    return c;
+  }
+  function delivHtml(c, oid) {
+    if (c.state === 'loading') return '<span class="skel" role="status" aria-label="Memuat foto serah terima"></span>';
+    if (c.state === 'err') return '<div class="note bad">' + ic('alert') + '<div><b>Foto serah terima belum bisa dimuat.</b> ' + esc(c.msg) + '</div><button class="btn sec sm" data-act="deliv-retry" data-id="' + esc(oid) + '">Coba lagi</button></div>';
+    if (c.kind === 'pdf') return '<div class="proofpdf"><b>Bukti berupa PDF</b><a class="btn" href="' + esc(c.url) + '" download="serah-terima-' + esc(oid) + '.pdf">Unduh PDF</a></div>';
+    return '<img class="proofimg" id="delivimg" style="cursor:default" src="' + esc(c.url) + '" alt="Foto serah terima ' + esc(oid) + '">';
+  }
+  function deliveryCard(o) {
+    var dl = o.shipment && o.shipment.delivery; if (!dl) return '<div class="note wait">' + ic('alert') + '<div>Pesanan lama: selesai tanpa foto serah terima.</div></div>';
+    return '<section class="card" id="delivcard"><h2>Serah terima</h2><div data-deliv-order="' + esc(o.id) + '"><span class="skel" role="status"></span></div>' +
+      '<div class="proofcmp" style="margin-top:12px"><div class="proofcmp__row"><span>Penerima</span><b>' + esc(dl.receiver_name || '—') + '</b></div>' +
+      '<div class="proofcmp__row"><span>Catatan</span><span>' + esc(dl.note || '—') + '</span></div>' +
+      '<div class="proofcmp__row"><span>Waktu</span><b>' + (dl.at ? fmtDT(dl.at) : '—') + '</b></div></div></section>';
+  }
+  function shrinkImage(file, maxBytes) { // sisi terpanjang 1600px, JPEG ~0.8; turun bertahap sampai <= maxBytes
+    return new Promise(function (res, rej) {
+      var url = URL.createObjectURL(file), img = new Image();
+      img.onerror = function () { URL.revokeObjectURL(url); rej(new Error('Foto tidak bisa dibuka. Coba foto lain.')); };
+      img.onload = function () {
+        URL.revokeObjectURL(url);
+        var scale = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight)), q = 0.8, tries = 0;
+        (function pass() {
+          var c = document.createElement('canvas'); c.width = Math.max(1, Math.round(img.naturalWidth * scale)); c.height = Math.max(1, Math.round(img.naturalHeight * scale));
+          var g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+          c.toBlob(function (b) {
+            if (!b) { rej(new Error('Foto gagal dikecilkan')); return; }
+            if (b.size > maxBytes && tries < 8) { tries++; if (q > 0.5) q -= 0.15; else scale *= 0.75; pass(); return; }
+            res(b);
+          }, 'image/jpeg', q);
+        })();
+      };
+      img.src = url;
+    });
+  }
+  function blobToDataUrl(b) { return new Promise(function (res, rej) { var rd = new FileReader(); rd.onload = function () { res(String(rd.result)); }; rd.onerror = function () { rej(new Error('Berkas tidak bisa dibaca')); }; rd.readAsDataURL(b); }); }
+  function dlgFinish(id) {
+    var o = orderById(id); if (!o) return;
+    var sheet = sheetMode(), self = L.isSelfShip(o.shipment), picked = null, busy = false;
+    var maxImg = sheet ? 900 * 1024 : 380 * 1024, maxPdf = sheet ? 5 * 1024 * 1024 : 280 * 1024;
+    var ov = openModal({ title: 'Selesaikan pesanan ' + id, body:
+      '<div class="field"><label class="f" for="fin-f">' + (self ? 'Foto barang diterima customer' : 'Foto bukti terima dari kurir (POD) atau screenshot status terkirim') + ' (wajib)</label>' +
+      '<input id="fin-f" type="file" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf"><div class="muted small">JPG, PNG, atau PDF. Foto dikecilkan otomatis.' + (sheet ? '' : ' Mode lokal: disimpan di peramban ini (demo).') + '</div><div id="fin-prev" style="margin-top:8px"></div></div>' +
+      '<div class="field"><label class="f" for="fin-n">Nama penerima (opsional)</label><input id="fin-n" class="input" maxlength="80"></div>' +
+      '<div class="field"><label class="f" for="fin-c">Catatan (opsional)</label><input id="fin-c" class="input" maxlength="200"></div>',
+      actions: [{ label: 'Batal', kind: 'sec' }, { label: 'Simpan', id: 'fin-save', disabled: true, fn: function (m) { save(m); return false; } }] });
+    var btn = $('#fin-save', ov), prev = $('#fin-prev', ov);
+    function setErr(msg) { fieldErr(ov, msg); }
+    $('#fin-f', ov).addEventListener('change', function (e) {
+      var f = e.target.files[0]; picked = null; btn.disabled = true; var er = $('.errmsg', ov); if (er) er.remove(); prev.innerHTML = '';
+      if (!f) return;
+      var pdf = /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name);
+      if (!pdf && !/^image\/(jpeg|png)$/.test(f.type)) { setErr('Format harus JPG, PNG, atau PDF.'); return; }
+      prev.innerHTML = '<span class="muted small" role="status">Menyiapkan berkas…</span>';
+      (pdf ? Promise.resolve(f) : shrinkImage(f, maxImg)).then(function (b) {
+        if (b.size > (pdf ? maxPdf : maxImg)) throw new Error(pdf ? 'PDF terlalu besar (maks. ' + Math.round(maxPdf / 1024 / 1024 * 10) / 10 + ' MB).' : 'Foto terlalu besar.');
+        return blobToDataUrl(b).then(function (u) { picked = { url: u, b64: u.split(',')[1] || '', mime: pdf ? 'application/pdf' : 'image/jpeg', kb: Math.round(b.size / 1024) }; });
+      }).then(function () {
+        prev.innerHTML = picked.mime === 'application/pdf' ? '<div class="proofpdf"><b>PDF</b> ' + picked.kb + ' KB</div>' : '<img id="fin-img" class="proofimg" style="max-height:220px;cursor:default" src="' + picked.url + '" alt="Pratinjau foto serah terima"><div class="muted small">' + picked.kb + ' KB (sudah dikecilkan)</div>';
+        btn.disabled = false;
+      }, function (err) { prev.innerHTML = ''; setErr(err.message || 'Berkas tidak bisa dipakai.'); });
+    });
+    function save(m) {
+      if (!picked || busy) return;
+      busy = true; btn.disabled = true; btn.textContent = 'Menyimpan…';
+      var rn = $('#fin-n', m).value, nt = $('#fin-c', m).value;
+      function fail(msg) { busy = false; btn.disabled = false; btn.textContent = 'Simpan'; setErr(msg); }
+      function done() { closeModal(); toast('Pesanan selesai. Foto serah terima tersimpan.'); render(); }
+      if (!sheet) { var r = A.complete(id, { data_url: picked.url, mime: picked.mime, receiver_name: rn, note: nt }); if (!r.ok) fail(r.error); else done(); return; }
+      DS.sync.flush().then(function () { return DS.sync.deliveryUpload(id, picked.b64, rn, nt); }).then(function (res) {
+        if (!res.ok) { fail(res.message || 'Server menolak.'); return; }
+        DS.sync.pull().then(done, done);
+      });
+    }
   }
   function closeLightbox() { var l = $('#lightbox'); if (l && l.parentNode) l.parentNode.removeChild(l); }
   function openLightbox(orderId) {
@@ -1096,7 +1188,8 @@
       });
     },
     'wa-track': function (el) { withTrackKey(orderById(el.getAttribute('data-id')), function (o) { var t = L.trackText(o); waModal({ title: 'Kirim tautan Lacak', text: t, url: L.waLink(o.customer.wa, t), sentLabel: 'Sudah terkirim', textHtml: esc(t), onSent: function () { toast('Dicatat: tautan Lacak dikirim.'); return true; } }); }); },
-    'complete': function (el) { afterAction(A.complete(el.getAttribute('data-id')), 'Pesanan selesai.'); },
+    'complete': function (el) { dlgFinish(el.getAttribute('data-id')); },
+    'deliv-retry': function (el) { delete delivCache[el.getAttribute('data-id')]; hydrateProofs(); },
     'cancel': function (el) { dlgCancel(el.getAttribute('data-id')); },
     'refund-done': function (el) { afterAction(A.refundDone(el.getAttribute('data-id')), 'Refund ditandai sudah ditransfer.'); },
     'quote-send': function () {

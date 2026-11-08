@@ -830,6 +830,21 @@
       return { ok: false, error: (res && res.error) || 'server', message: (res && res.message) || (res && res.error === 'unauthorized' ? 'Token ditolak' : 'Server menolak') };
     }, function (e) { return { ok: false, error: 'network', message: (e && e.message) || 'Gagal menghubungi server' }; });
   }
+  // ADMIN (ADM-24): unggah foto serah terima; server yang memindahkan status ke completed. -> Promise<{ok, updated_at}|{ok:false, message}>
+  function deliveryUpload(orderId, b64, receiver, note) {
+    if (!cfg) return Promise.resolve({ ok: false, error: 'no_token', message: 'Dashboard belum terhubung ke Sheet (token).' });
+    return postOp(cfg, { op: 'delivery_proof_upload', id: orderId, file_b64: b64, receiver_name: receiver || '', note: note || '' }, 60000).then(function (res) {
+      if (res && res.ok) return res;
+      return { ok: false, error: (res && res.error) || 'server', message: (res && res.message) || (res && res.error === 'unauthorized' ? 'Token ditolak' : 'Server menolak') };
+    }, function (e) { return { ok: false, error: 'network', message: (e && e.message) || 'Gagal menghubungi server' }; });
+  }
+  function deliveryGet(orderId) {
+    if (!cfg) return Promise.resolve({ ok: false, error: 'no_token', message: 'Foto hanya bisa dibuka di Dashboard yang terhubung (token).' });
+    return postOp(cfg, { op: 'delivery_proof_get', id: orderId }, 30000).then(function (res) {
+      if (res && res.ok) return res;
+      return { ok: false, error: (res && res.error) || 'server', message: (res && res.message) || 'Server menolak' };
+    }, function (e) { return { ok: false, error: 'network', message: (e && e.message) || 'Gagal menghubungi server' }; });
+  }
   // ADMIN: kunci Lacak untuk pesanan (membuat bila belum ada). -> Promise<{ok, track_key}>
   function ensureTrackKey(orderId) {
     if (!cfg) return Promise.resolve({ ok: false, error: 'no_token' });
@@ -979,7 +994,7 @@
     renderSettings: renderSettings,
     badgeHtml: badgeHtml,
     now: syncNow, pull: pull, flush: flush,
-    testConnection: testConnection, proofGet: proofGet, ensureTrackKey: ensureTrackKey, setupSheet: setupSheet, pullPublic: pullPublic,
+    testConnection: testConnection, proofGet: proofGet, deliveryUpload: deliveryUpload, deliveryGet: deliveryGet, ensureTrackKey: ensureTrackKey, setupSheet: setupSheet, pullPublic: pullPublic,
     getConfig: function () { return cfg ? { url: cfg.url, token: cfg.token } : null; },
     saveConfig: saveConfig, disconnect: disconnect,
     _pure: { parseMoney: parseMoney, parseMoneyStrict: parseMoneyStrict, parseBool: parseBool, productToRow: productToRow, rowToProduct: rowToProduct,

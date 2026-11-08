@@ -236,6 +236,11 @@ function planUpsert_(tab, state, rows, baseStamp) {
       results.push({ id: id, status: 'stale', updated_at: cur[uc], server_record: sr });
       return;
     }
+    if (tab === 'orders') {
+      var exRec = i !== undefined && verdict !== 'remapped' ? safeParse_(state.rows[i][headers.indexOf('json')]) : null;
+      var guard = deliveryGuard_(exRec, row.record);
+      if (guard) { results.push({ id: id, status: 'invalid', reason: guard }); return; }
+    }
     var rec = row.record, newId = null, stamp = monotonicStamp_(baseStamp, existing && verdict !== 'remapped' ? existing.updated_at : '');
     if (verdict === 'remapped') {
       newId = nextFreeId_(id, taken);
@@ -258,6 +263,33 @@ function planUpsert_(tab, state, rows, baseStamp) {
     results.push(res);
   });
   return { results: results, writes: writes, txRows: tx };
+}
+
+function deliveryFileId_(o) { var sh = o && o.shipment, d = sh && sh.delivery; return d && typeof d.file_id === 'string' ? d.file_id : ''; }
+// ADM-24: klien tidak boleh membuat/ mengubah bukti serah terima lewat upsert. Hanya op delivery_proof_upload yang mengisinya.
+// ex = record pesanan di sheet (atau null), rec = record kiriman klien. null = lolos; selain itu alasan penolakan.
+function deliveryGuard_(ex, rec) {
+  if (!rec || typeof rec !== 'object') return null;
+  var exDel = deliveryFileId_(ex), recDel = deliveryFileId_(rec);
+  if (recDel !== exDel) return 'delivery_proof_required';
+  if (rec.status === 'completed' && !exDel && !(ex && ex.status === 'completed')) return 'delivery_proof_required'; // pesanan lama yang sudah completed (tanpa foto) tetap boleh disimpan ulang
+  return null;
+}
+// Terapkan serah terima: shipped -> completed. file = { file_id, mime }. Mengembalikan { ok, order } atau err_.
+function applyDeliveryProof_(order, req, stamp, file) {
+  var o = JSON.parse(JSON.stringify(order)), at = stamp.slice(0, 19) + '+07:00';
+  req = req || {};
+  if (o.status !== 'shipped') return err_('not_allowed', 'Hanya pesanan berstatus Dikirim yang bisa diselesaikan.');
+  var rn = cleanText_(req.receiver_name, 80), nt = cleanText_(req.note, 200);
+  if (rn === null) return err_('invalid_input', 'Nama penerima maksimal 80 huruf.');
+  if (nt === null) return err_('invalid_input', 'Catatan maksimal 200 huruf.');
+  if (!file || !file.file_id) return err_('delivery_proof_required', 'Foto serah terima wajib dilampirkan.');
+  if (!o.shipment || typeof o.shipment !== 'object') o.shipment = {};
+  o.shipment.delivery = { file_id: file.file_id, mime: file.mime, receiver_name: rn, note: nt, at: at };
+  o.status = 'completed';
+  if (!o.history) o.history = [];
+  o.history.push({ at: at, status: 'completed', by: 'david', note: 'Selesai: foto serah terima diunggah', delivery_proof: true });
+  return { ok: true, order: o };
 }
 
 function safeParse_(s) { try { return JSON.parse(s); } catch (e) { return null; } }
@@ -703,11 +735,33 @@ function opOrderAction_(body) {
   writeTx_('orders', { writes: [{ rowIndex: f.index, values: tx.main, id: id }], txRows: (function () { var m = {}; m[id] = tx; return m; })() });
   return { ok: true, order: customerView_(tx.record, settingsNow_()) };
 }
-// ADMIN (token): isi bukti dari Drive. Tidak ada jalur publik.
+// ADMIN (token): foto serah terima -> Drive (folder yang sama dengan bukti transfer, nama ST-<id>-<waktu>), lalu status completed DI SERVER.
+function opDeliveryUpload_(body) {
+  var f = findOrderRow_(body.id);
+  if (!f || !f.order) return err_('not_found', 'Pesanan tidak ditemukan.');
+  var stamp = monotonicStamp_(formatStamp_(new Date()), f.updated_at);
+  var pre = applyDeliveryProof_(f.order, body, stamp, { file_id: 'cek', mime: 'image/jpeg' }); // aturan dulu, supaya tidak ada berkas yatim
+  if (!pre.ok) return pre;
+  var b64 = String(body.file_b64 || '');
+  if (!b64) return err_('delivery_proof_required', 'Foto serah terima wajib dilampirkan.');
+  if (b64.length > PROOF.b64Max) return err_('invalid_input', 'Berkas terlalu besar.');
+  var bytes;
+  try { bytes = Utilities.base64Decode(b64); } catch (e) { return err_('invalid_input', 'Berkas rusak.'); }
+  var chk = checkProofBytes_(bytes);
+  if (!chk.ok) return chk;
+  var saved = proofFolder_().createFile(Utilities.newBlob(bytes, chk.mime, 'ST-' + f.order.id + '-' + stamp.slice(0, 19).replace(/[-:]/g, '') + '.' + chk.ext));
+  var r = applyDeliveryProof_(f.order, body, stamp, { file_id: saved.getId(), mime: chk.mime });
+  if (!r.ok) return r;
+  var tx = buildTxRows_('orders', r.order, stamp), id = f.order.id;
+  writeTx_('orders', { writes: [{ rowIndex: f.index, values: tx.main, id: id }], txRows: (function () { var m = {}; m[id] = tx; return m; })() });
+  return { ok: true, id: id, status: 'completed', updated_at: stamp };
+}
+// ADMIN (token): isi bukti dari Drive. Tidak ada jalur publik. p.kind === 'delivery' = foto serah terima.
 function opProofGet_(p) {
   var f = findOrderRow_(p.id);
   if (!f || !f.order) return { ok: false, error: 'not_found', message: 'Pesanan tidak ditemukan.' };
   var pay = f.order.payment || {};
+  if (p.kind === 'delivery') { var dl = (f.order.shipment && f.order.shipment.delivery) || {}; pay = { proof_file_id: dl.file_id, proof_name: 'serah-terima', uploaded_at: dl.at }; }
   if (!pay.proof_file_id) return { ok: false, error: 'no_file', message: 'Belum ada berkas bukti (hanya nama berkas).' };
   try {
     var bytes = DriveApp.getFileById(pay.proof_file_id).getBlob().getBytes();
@@ -770,6 +824,8 @@ function doPost(e) {
     if (body.op === 'ping') return out_(opPing_());
     if (body.op === 'pull') return out_(opPull_());
     if (body.op === 'proof_get') return out_(opProofGet_(body));
+    if (body.op === 'delivery_proof_upload') return out_(opDeliveryUpload_(body));
+    if (body.op === 'delivery_proof_get') { body.kind = 'delivery'; return out_(opProofGet_(body)); }
     if (body.op === 'track_key_ensure') return out_(opTrackKeyEnsure_(body));
     if (body.op === 'upsert') return out_(opUpsert_(body));
     if (body.op === 'setup') return out_(opSetup_());

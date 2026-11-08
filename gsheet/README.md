@@ -40,6 +40,12 @@ Dipakai setiap kali `Code.gs` di repo berubah, termasuk untuk pembaruan ini (jal
 - Berkas disimpan di Google Drive milik pemasang script, folder **"DStore — Bukti Transfer"**, nama `<nomor pesanan>-<waktu>.<jpg|png|pdf>`, **privat** (tidak pernah dibagikan). Hanya Dashboard ber-token yang bisa membukanya (`proof_get`); tidak ada jalur publik.
 - Dashboard menampilkan fotonya langsung di kartu "Bukti transfer" (gambar `data:` dari server, PDF hanya diunduh; tidak ada iframe/blob), dengan perbandingan Nominal diklaim vs Total tagihan.
 
+## Foto serah terima (ADM-24)
+- Pesanan **Dikirim** tidak selesai sendiri. Di Dashboard, David klik **Selesaikan pesanan**, wajib unggah foto (JPG/PNG/PDF; foto dikecilkan otomatis, maks. 1 MB; PDF maks. 5 MB), boleh isi nama penerima (maks. 80) dan catatan (maks. 200).
+- Server (`delivery_proof_upload`, hanya ber-token) memeriksa isi berkas, menyimpannya **privat** di folder Drive yang sama dengan bukti transfer ("DStore — Bukti Transfer"), nama `ST-<nomor pesanan>-<waktu>.<jpg|png|pdf>`, lalu **server sendiri** mengubah status ke Selesai. Simpan biasa dari Dashboard tidak bisa membuat status Selesai tanpa foto (ditolak `delivery_proof_required`).
+- Dashboard menampilkan fotonya di kartu "Serah terima" (`delivery_proof_get`). Customer di halaman Lacak hanya melihat "Pesanan selesai — diterima <tanggal>"; foto, nama penerima, dan catatan tidak pernah keluar ke publik.
+- **Memasang pembaruan ini:** Apps Script > ganti isi `Code.gs` dengan `prototype/gsheet/Code.gs` > simpan > **Deploy > Manage deployments** > ikon pensil > **Version: New version** > **Deploy**. URL `/exec` tetap. Izin Drive sudah ada dari versi sebelumnya, jadi biasanya tidak diminta lagi; bila diminta, klik **Authorize**. Tanpa langkah ini tombol Selesaikan di Dashboard yang terhubung ke Sheet ditolak server (`unknown_op`).
+
 ## Pemulihan PO terbatal (bug lama)
 Bila pesanan Lunas/Diproses menampilkan peringatan merah "Data PO tidak konsisten" dan PO berstatus Dibatalkan, klik **Pulihkan PO** di detail pesanan. PO kembali ke Dibalas dan item terpilih dipulihkan dari Harga Distributor yang tercatat di pesanan. Akar masalah (tarikan dan kirim berjalan bersamaan sehingga data sheet lama menimpa perubahan lokal) sudah diperbaiki di `shared/sync.js`.
 
