@@ -1,31 +1,65 @@
 # Menyambungkan prototipe ke Google Sheet (INF-01)
 
-Sekali saja, sekitar 10 menit. **Hanya data CONTOH**: siapa pun yang punya URL + token bisa membaca dan menulis seluruh sheet.
+Sheet ini adalah **sumber katalog** (produk, brand, kategori, distributor) dan **tempat pesanan masuk**. Tidak ada data contoh di aplikasi. Cara mengisi data: `PANDUAN-ISI-DATA.md`.
 
-1. Buka sheet yang sudah disiapkan: https://docs.google.com/spreadsheets/d/1l9mTF9C15Fym5i2E1OcO1eS4bhRI2bgwSxYbrS2Amd0/edit (masih kosong; tab dibuat otomatis, tidak perlu membuat tab manual). Bagikan hanya ke David.
-2. Menu **Extensions > Apps Script**. Hapus isi `Code.gs`, tempel seluruh isi `prototype/gsheet/Code.gs`. Simpan (ikon disket).
-3. Ikon roda (**Project Settings**) > **Script Properties** > **Add script property**: nama `DS_TOKEN`, nilai = kata acak panjang. Catat di tempat pribadi, jangan di chat atau repo. Simpan.
-4. **Deploy > New deployment** > ikon roda > **Web app**. Execute as: **Me**. Who has access: **Anyone**. Deploy, izinkan akses (Advanced > Go to project), lalu salin URL yang berakhiran **/exec**.
-5. Jalankan prototipe: `cd prototype && python3 -m http.server 8080`, buka `http://localhost:8080/dashboard/#/pengaturan`. Isi URL + token, klik **Tes koneksi** (harus "Terhubung ... 0 produk, 0 order"), lalu **Simpan dan hubungkan**.
-6. Klik **Isi sheet dengan data contoh**. Tab `settings`, `brands`, `categories`, `distributors`, `products`, `orders`, `purchase_orders`, `order_items`, `po_items` terbuat sendiri dan terisi (49 produk, 9 order). Tombol ini ditolak bila sheet sudah berisi, jadi tidak bisa menimpa.
-7. Buka `http://localhost:8080/marketplace/`: badge harus "Sumber data: Google Sheet".
+Ada dua jenis akses ke Web App yang sama:
+- **Tanpa token (publik, dipakai toko di github.io):** membaca katalog publik (`?op=catalog`), membuat pesanan baru, melacak pesanan (nomor pesanan + WhatsApp harus cocok), dan aksi customer yang sah (terima/tolak barang, batal sebelum bayar, kirim nama berkas bukti bayar). Semua divalidasi server; harga selalu diambil ulang dari tab `products`. URL ini bukan rahasia.
+- **Dengan token (admin: Dashboard Kevin/David):** baca dan tulis seluruh sheet. Token = rahasia.
+
+## Pemasangan pertama (sekali, sekitar 10 menit)
+
+1. Buka sheet: https://docs.google.com/spreadsheets/d/1l9mTF9C15Fym5i2E1OcO1eS4bhRI2bgwSxYbrS2Amd0/edit . Bagikan hanya ke David.
+2. **Extensions > Apps Script**. Hapus isi `Code.gs`, tempel seluruh isi `prototype/gsheet/Code.gs`. Simpan (ikon disket).
+3. Roda (**Project Settings**) > **Script Properties** > **Add script property**: nama `DS_TOKEN`, nilai = kata acak **minimal 32 karakter**. Catat di tempat pribadi, jangan di chat atau repo. (Pengaturan Dashboard memberi peringatan bila token lebih pendek.)
+4. **Deploy > New deployment** > roda > **Web app**. Execute as: **Me**. Who has access: **Anyone**. Deploy, izinkan akses, salin URL berakhiran **/exec**.
+5. Dashboard: `cd prototype && python3 -m http.server 8080`, buka `http://localhost:8080/dashboard/#/pengaturan`. Isi URL + token, **Tes koneksi**, lalu **Simpan dan hubungkan**.
+6. Klik **Siapkan tab sheet** (membuat tab + judul kolom saja; tidak menulis data, tidak menimpa apa pun).
+
+## Memperbarui deployment yang sudah ada (URL TETAP SAMA)
+
+Dipakai setiap kali `Code.gs` di repo berubah, termasuk untuk pembaruan ini (jalur publik katalog dan pesanan **baru jalan setelah langkah ini**):
+
+1. Apps Script > hapus isi `Code.gs`, tempel seluruh isi `prototype/gsheet/Code.gs`, simpan.
+2. **Deploy > Manage deployments** > ikon pensil pada deployment yang aktif > **Version: New version** > **Deploy**.
+3. URL `/exec` **tidak berubah**. (Tanpa langkah ini URL tetap menjalankan kode lama.)
+   - **Izin baru:** versi ini memakai **Google Drive** (menyimpan foto bukti transfer di folder pribadi "DStore — Bukti Transfer") dan **Email** (satu peringatan per hari ke pemilik script bila batas pesanan tercapai). Saat Deploy, Google meminta **Authorize** lagi: klik Review permissions > pilih akun Anda > Advanced > Go to project > Allow. Tanpa ini unggah bukti dan email peringatan gagal.
+4. **Sekali saja**, untuk membuang data contoh lama dari tab master: pilih fungsi `resetMasterTabs` di dropdown editor, klik **Run**, izinkan bila diminta. Hasilnya muncul di **Execution log**:
+   - `brands`, `products`, `categories`: baris data dikosongkan (judul kolom tetap).
+   - `distributors`: tersisa 5 nama (Daya Prima, Donic, Andro, Stiga, Sinar Surya), kolom `wa` kosong.
+   - `settings`: baris `assembly_fee` ditandai "CONTOH" dari data awal dihapus (nilai yang David isi sendiri tidak disentuh).
+   - Pesanan (`orders`, `purchase_orders`, `order_items`, `po_items`) **tidak disentuh**. Pesanan contoh lama masih ada di sana; hapus barisnya manual di sheet bila tidak diperlukan.
+   - Fungsi menolak dijalankan kedua kali (supaya data asli David tidak terhapus tak sengaja). Untuk memaksa, hapus properti `DS_MASTER_RESET_DONE` di Script Properties.
+5. Isi data asli di sheet (lihat `PANDUAN-ISI-DATA.md`), lalu Dashboard > Pengaturan > **Tarik ulang**.
 
 ## Yang boleh disunting di sheet
-- Tab `products`, `brands` (kolom `visible`: FALSE menyembunyikan brand), `categories`, `distributors`, `settings`: boleh diedit langsung (harga boleh `2.815.000`). Tampil di aplikasi setelah halaman kembali difokuskan atau tombol **Tarik ulang**.
-- Produk baru: isi baris baru di `products`; `brand_id` harus sama dengan `id` di tab `brands`.
-- Foto produk: kolom `image` berisi URL https atau path seperti `assets/products/BL-01.jpg`.
+- Tab `products`, `brands`, `categories`, `distributors`, `settings`: boleh diedit langsung (harga boleh `2.815.000`).
 - Tab `orders`, `purchase_orders`, `order_items`, `po_items`: **jangan diedit**. Kolom ringkasan diturunkan dari kolom `json` dan ditimpa saat disimpan; kebenarannya di Dashboard.
 
-## Setiap kali `Code.gs` diubah
-Tempel ulang, lalu **Deploy > Manage deployments > pensil > Version: New version > Deploy**. Tanpa ini URL /exec tetap menjalankan kode lama. URL tidak berubah.
+## Bukti transfer (foto)
+- Customer mengunggah foto (dikecilkan otomatis di browser, maks. sisi 1600 px, JPEG) atau PDF (maks. 5 MB) dari halaman Lacak. Server memeriksa **isi berkas** (JPEG/PNG/PDF, bukan label dari klien), batas 1 MB untuk foto, maks. **3 unggahan per pesanan** (yang baru menggantikan; semua tercatat di riwayat).
+- Berkas disimpan di Google Drive milik pemasang script, folder **"DStore — Bukti Transfer"**, nama `<nomor pesanan>-<waktu>.<jpg|png|pdf>`, **privat** (tidak pernah dibagikan). Hanya Dashboard ber-token yang bisa membukanya (`proof_get`); tidak ada jalur publik.
+- Dashboard menampilkan fotonya langsung di kartu "Bukti transfer" (gambar `data:` dari server, PDF hanya diunduh; tidak ada iframe/blob), dengan perbandingan Nominal diklaim vs Total tagihan.
+
+## Pemulihan PO terbatal (bug lama)
+Bila pesanan Lunas/Diproses menampilkan peringatan merah "Data PO tidak konsisten" dan PO berstatus Dibatalkan, klik **Pulihkan PO** di detail pesanan. PO kembali ke Dibalas dan item terpilih dipulihkan dari Harga Distributor yang tercatat di pesanan. Akar masalah (tarikan dan kirim berjalan bersamaan sehingga data sheet lama menimpa perubahan lokal) sudah diperbaiki di `shared/sync.js`.
+
+## Keamanan jalur publik
+- Katalog publik hanya berisi: `categories`, `brands` (visible), `products` (is_active) dengan daftar kolom tetap. **Tidak pernah**: `distributors`, `settings`, `orders`, PO, `distributor_id`, kolom biaya/margin.
+- Pesanan baru: ID, status, riwayat dibuat server; harga diambil ulang dari sheet (harga kiriman klien diabaikan); batas sekitar 30 pesanan per 10 menit untuk semua dan 3 per 10 menit per nomor WhatsApp (memakai CacheService; best-effort, bukan jaminan keras). Honeypot ikut ditolak.
+- Lacak dan aksi customer butuh **tiga hal cocok sekaligus**: nomor pesanan + WhatsApp + **kunci Lacak (`track_key`)** acak 32 karakter yang dibuat server saat pesanan masuk dan hanya ada di tautan Lacak (halaman sukses, teks WA harga final). Salah satu salah menghasilkan jawaban yang sama ("tidak ditemukan"). Nomor pesanan + WhatsApp saja **tidak** cukup, jadi menebak nomor urut tidak berguna. Pesanan lama tanpa kunci: Dashboard membuatkannya otomatis saat Anda mengirim harga final. Penahanan percobaan gagal (10 per nomor per 10 menit) hanya menolak tebakan yang salah; pemilik dengan tautan benar selalu lolos.
+- Nilai teks dari publik yang diawali `=`, `+`, `-`, `@`, tab, atau CR diberi awalan `'` sebelum masuk sheet supaya tidak pernah menjadi rumus Sheet.
+- Pesan kesalahan teknis server tidak dikirim ke publik (hanya "terjadi gangguan"); detailnya ada di Executions Apps Script.
+- Terima/tolak "harga final": tidak ada tombol terpisah. Persetujuan = kirim bukti bayar; customer dapat menolak barang per baris atau membatalkan pesanan sebelum bayar.
 
 ## Bila URL atau token bocor
-Buat deployment baru (URL berubah) dan ganti `DS_TOKEN`.
+Token bocor: ganti `DS_TOKEN`. URL admin tidak bisa dipisah dari URL publik (satu deployment). Bila perlu mencabut URL: buat deployment baru (URL berubah) dan perbarui `shared/config.js` serta Pengaturan Dashboard.
 
 ## Batas yang perlu diketahui
 - Satu order = satu unit konflik. Bila dua perangkat mengubah order yang sama, yang kedua ditolak (muncul pesan) dan versi sheet dimuat.
-- Order/PO yang dibuat di mode lokal tidak dipindah ke sheet; salinannya disimpan di browser (key `ds_local_dropped_v1`).
-- Sinkron ini hanya untuk prototipe; app sungguhan memakai Supabase.
+- Order/PO yang dibuat di mode lokal (tanpa sheet) tidak dipindah ke sheet; salinannya disimpan di browser (key `ds_local_dropped_v1`).
+- Dashboard menarik data otomatis tiap sekitar 45 detik saat tab terlihat, jadi pesanan baru dari toko muncul sendiri.
+- Kuota Google Apps Script (jumlah panggilan harian) berlaku; katalog di-cache 60 detik di server dan di browser.
+- Sinkron ini untuk prototipe; app sungguhan memakai Supabase.
 
-## Catatan risiko: token di query string GET
-Apps Script `doGet` tidak bisa membaca header, jadi tarik data dan Tes koneksi mengirim token lewat query (`?op=...&token=...`). Akibatnya token bisa tercatat di log Google, riwayat browser, dan proxy/log jaringan mana pun yang melihat URL. Penulisan (POST) membawa token di badan, bukan di URL. Batasan yang dipakai: hanya data CONTOH, URL hanya `https://script.google.com/...` (skema lain ditolak di aplikasi), dan token diganti bila dicurigai bocor (lihat bagian di atas). Jangan pakai untuk data nyata; app sungguhan memakai Supabase dengan autentikasi di header.
+## Token admin
+Semua op admin lewat POST dengan token di badan (tidak di URL, tidak masuk log URL). Token disimpan di `localStorage` browser Dashboard pada origin yang sama dengan toko staging; jangan memasang situs lain di origin yang sama. Gunakan `DS_TOKEN` acak minimal 32 karakter dan ganti bila dicurigai bocor. Untuk data nyata skala besar, app sungguhan memakai Supabase dengan autentikasi di header.

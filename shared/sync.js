@@ -1,7 +1,8 @@
 /* DavidStore prototipe — sync.js (INF-01, ADR-003)
    Sinkron localStorage <-> Google Sheet lewat Apps Script Web App (prototype/gsheet/Code.gs).
-   Hanya prototipe, hanya data CONTOH. Urutan skrip: catalog.js -> store.js -> sync.js -> (logic.js) -> app.js.
-   Tanpa URL di ds_config_v1 = mode lokal: berkas ini tidak melakukan apa-apa selain menyediakan API.
+   Urutan skrip: config.js -> catalog.js -> store.js -> sync.js -> (logic.js) -> app.js.
+   Sumber katalog: (1) ds_config_v1 ber-token = tab sheet; (2) tanpa token tapi DS_PUBLIC.catalogUrl = op=catalog (baca saja);
+   (3) tidak ada keduanya = katalog kosong. Tidak ada data contoh di klien.
    Bisa di-load di Node (tes): butuh DS dari store.js, localStorage/fetch boleh berupa stub. */
 (function (root) {
   'use strict';
@@ -12,6 +13,8 @@
   var K_SYNC = 'ds_sync_v1';
   var K_CAT = 'ds_catalog_v1';
   var K_DROPPED = 'ds_local_dropped_v1'; // cadangan order/PO lokal yang tidak ikut ke sheet
+  var K_CAT_PUB = 'ds_catalog_pub_v1'; // cache katalog publik (mode tanpa token)
+  var AUTO_PULL_MS = 45000; // tarik otomatis berkala saat tab aktif (pesanan baru dari toko publik)
   var TABS = ['settings', 'brands', 'distributors', 'orders', 'purchase_orders']; // urutan kirim
   var PULL_TIMEOUT = 10000;
   var PUSH_TIMEOUT = 20000;
@@ -19,9 +22,6 @@
   var ST = DS._store;
 
   /* ============================================================ konversi murni (diuji di Node) */
-
-  var RUBBER_COLORS = ['Hitam', 'Merah', 'Biru'];
-  var THICK = ['1.8', '2.0', 'Max'];
 
   // "2.815.000", "Rp 2.815.000", "2815000,00" -> 2815000 (integer). Kosong/tak terbaca -> null.
   function parseMoney(v) {
@@ -32,11 +32,38 @@
     var d = s.replace(/\D/g, '');
     return d ? parseInt(d, 10) : null;
   }
+  // Ketat untuk harga produk: "abc", "12 juta", kosong, 0 -> null (bukan angka yang valid)
+  function parseMoneyStrict(v) {
+    if (typeof v === 'number') return isFinite(v) && v > 0 ? Math.round(v) : null;
+    var s = String(v == null ? '' : v).trim().replace(/^rp\.?\s*/i, '').replace(/\s/g, '');
+    if (!/^\d[\d.,]*$/.test(s)) return null;
+    s = s.replace(/[.,]\d{1,2}$/, '');
+    var d = s.replace(/\D/g, '');
+    if (!d) return null;
+    var n = parseInt(d, 10);
+    return n > 0 ? n : null;
+  }
+  // Kolom yang kurang/salah pada satu baris produk (kosong = layak tampil). Cermin productProblems_ di Code.gs.
+  function productProblems(r, brandIds, catIds) {
+    var bad = [], c = String(r.category || '').trim();
+    if (!String(r.sku || r.id || '').trim()) bad.push('sku');
+    if (!String(r.name || '').trim()) bad.push('name');
+    if (parseMoneyStrict(r.price) === null) bad.push('price');
+    if (String(r.price_to || '').trim() !== '' && parseMoneyStrict(r.price_to) === null) bad.push('price_to');
+    if (!brandIds[String(r.brand_id || '').trim()]) bad.push('brand_id');
+    if (!catIds[c]) bad.push('category');
+    if (c === 'blade' && !parseList(r.handles).length) bad.push('handles');
+    if (c === 'karet') {
+      if (!parseList(r.thicknesses).length) bad.push('thicknesses');
+      if (!parseList(r.colors).length) bad.push('colors');
+    }
+    return bad;
+  }
   // FALSE/0/TIDAK/N (tanpa beda huruf) = false; kosong/lainnya = true
   function parseBool(v) {
     if (typeof v === 'boolean') return v;
     var s = String(v == null ? '' : v).trim().toLowerCase();
-    return !(s === 'false' || s === '0' || s === 'tidak' || s === 'n');
+    return !(s === 'false' || s === '0' || s === 'tidak' || s === 'n' || s === 'no');
   }
   function parseNum(v) {
     var s = String(v == null ? '' : v).trim().replace(',', '.');
@@ -79,17 +106,17 @@
     };
   }
 
-  // baris tab products -> objek produk berbentuk DS_CATALOG (aturan options sama dengan P() di catalog.js)
+  // baris tab products -> objek produk berbentuk DS_CATALOG. Opsi varian HANYA dari kolom sheet (tanpa nilai bawaan).
   function rowToProduct(row, brandName) {
     var cat = row.category, options = [];
     if (cat === 'blade') {
       var h = parseList(row.handles);
-      options.push({ key: 'handle', label: 'Handle', type: 'seg', values: h.length ? h : ['FL', 'ST', 'AN'] });
+      if (h.length) options.push({ key: 'handle', label: 'Handle', type: 'seg', values: h });
     }
     if (cat === 'karet') {
       var t = parseList(row.thicknesses), c = parseList(row.colors);
-      options.push({ key: 'thickness', label: 'Ketebalan sponge (mm)', type: 'seg', values: t.length ? t : THICK });
-      options.push({ key: 'color', label: 'Warna', type: 'swatch', values: c.length ? c : RUBBER_COLORS });
+      if (t.length) options.push({ key: 'thickness', label: 'Ketebalan sponge (mm)', type: 'seg', values: t });
+      if (c.length) options.push({ key: 'color', label: 'Warna', type: 'swatch', values: c });
     }
     var isi = parseList(row.isi), sizes = parseList(row.sizes), wid = parseList(row.widths);
     if (isi.length) options.push({ key: 'isi', label: 'Isi per pak (bola)', type: 'seg', values: isi });
@@ -98,7 +125,7 @@
     var refN = parseNum(row.ref);
     var p = {
       sku: String(row.sku || row.id || '').trim(),
-      slug: String(row.slug || '').trim(),
+      slug: String(row.slug || '').trim() || DS._slug(brandName + ' ' + String(row.name || '')),
       ref: refN != null ? refN : strOrNull(row.ref),
       category: cat,
       brand: brandName,
@@ -129,53 +156,50 @@
     }).map(function (x) { return x.r; });
   }
 
-  // tab master hasil pull -> bentuk DS_CATALOG. Tab kosong = pakai bawaan catalog.js (base).
+  // tab master hasil pull -> bentuk DS_CATALOG. Tab kosong = bagian itu kosong (TIDAK ada data bawaan).
+  // Produk tidak lengkap (harga/brand/kategori/sku salah) tidak masuk `products`, tapi dicatat di `incomplete`.
   function buildCatalog(tabs, base) {
-    base = base || {};
-    var cat = {
-      sample: base.sample !== false, colors: base.colors || {}, assembly_fee: base.assembly_fee,
-      brands: base.brands || [], categories: base.categories || [], distributors: base.distributors || [], products: base.products || []
-    };
-    var brandRows = Array.isArray(tabs.brands) ? tabs.brands : [];
-    if (brandRows.length) {
-      cat.brands = bySort(brandRows).map(function (r) {
-        return { id: String(r.id).trim(), name: String(r.name || r.id).trim(), distributor_id: strOrNull(r.distributor_id) };
-      });
-    }
-    if (Array.isArray(tabs.categories) && tabs.categories.length) {
-      cat.categories = bySort(tabs.categories).map(function (r) {
-        return { id: String(r.id).trim(), name: String(r.name || r.id).trim(), prefix: String(r.prefix || '').trim() };
-      });
-    }
-    if (Array.isArray(tabs.distributors) && tabs.distributors.length) {
-      cat.distributors = tabs.distributors.map(function (r) {
-        return { id: String(r.id).trim(), name: String(r.name || r.id).trim(), wa: String(r.wa || '').trim(), note: String(r.note || '') };
-      });
-    }
-    if (Array.isArray(tabs.products) && tabs.products.length) {
-      var nameById = {};
-      cat.brands.forEach(function (b) { nameById[b.id] = b.name; });
-      cat.products = tabs.products.filter(function (r) { return String(r.sku || r.id || '').trim(); }).map(function (r) {
-        var bid = String(r.brand_id || '').trim();
-        return rowToProduct(r, nameById[bid] || bid);
-      });
-    }
-    // brand yang dipakai produk tapi tidak ada di tab brands: tetap muncul (tampil)
-    var have = {};
-    cat.brands.forEach(function (b) { have[b.name.toLowerCase()] = 1; });
-    cat.brands = cat.brands.slice();
-    cat.products.forEach(function (p) {
-      if (p.brand && !have[p.brand.toLowerCase()]) { have[p.brand.toLowerCase()] = 1; cat.brands.push({ id: DS._slug(p.brand), name: p.brand, distributor_id: null }); }
+    base = base || {}; tabs = tabs || {};
+    var cat = { sample: false, colors: base.colors || {}, assembly_fee: null, store: { address: '', wa: '', hours: '' }, brands: [], categories: [], distributors: [], products: [], incomplete: [] };
+    var brandRows = (Array.isArray(tabs.brands) ? tabs.brands : []).filter(function (r) { return String(r.id == null ? '' : r.id).trim(); });
+    cat.brands = bySort(brandRows).map(function (r) {
+      return { id: String(r.id).trim(), name: String(r.name || r.id).trim(), distributor_id: strOrNull(r.distributor_id) };
+    });
+    var catRows = (Array.isArray(tabs.categories) ? tabs.categories : []).filter(function (r) { return String(r.id == null ? '' : r.id).trim(); });
+    cat.categories = bySort(catRows).map(function (r) {
+      return { id: String(r.id).trim(), name: String(r.name || r.id).trim(), prefix: String(r.prefix || '').trim() };
+    });
+    cat.distributors = (Array.isArray(tabs.distributors) ? tabs.distributors : []).filter(function (r) { return String(r.id == null ? '' : r.id).trim(); }).map(function (r) {
+      return { id: String(r.id).trim(), name: String(r.name || r.id).trim(), wa: String(r.wa || '').trim(), note: String(r.note || '') };
+    });
+    var nameById = {}, catIds = {}, seenSku = {}, seenSlug = {};
+    cat.brands.forEach(function (b) { nameById[b.id] = b.name; });
+    cat.categories.forEach(function (c) { catIds[c.id] = true; });
+    (Array.isArray(tabs.products) ? tabs.products : []).forEach(function (r) {
+      var sku = String(r.sku || r.id || '').trim(), nm = String(r.name || '').trim();
+      if (!sku && !nm) return; // baris benar-benar kosong
+      var bad = productProblems(r, nameById, catIds);
+      if (sku && seenSku[sku]) bad.push('sku (dobel)');
+      if (bad.length) { cat.incomplete.push({ sku: sku, name: nm, missing: bad }); return; }
+      seenSku[sku] = true;
+      var p = rowToProduct(r, nameById[String(r.brand_id).trim()]);
+      if (seenSlug[p.slug]) p.slug = p.slug + '-' + DS._slug(sku);
+      seenSlug[p.slug] = true;
+      cat.products.push(p);
+    });
+    (tabs.settings || []).forEach(function (r) {
+      var v = String(r.value == null ? '' : r.value).trim();
+      if (r.id === 'address') cat.store.address = v; else if (r.id === 'david_wa') cat.store.wa = v; else if (r.id === 'store_hours') cat.store.hours = v;
     });
     var af = (tabs.settings || []).filter(function (r) { return r.id === 'assembly_fee'; })[0];
-    if (af) { var n = parseMoney(af.value); if (n != null) cat.assembly_fee = n; }
+    if (af && String(af.value == null ? '' : af.value).trim() !== '') { var n = parseMoney(af.value); if (n != null) cat.assembly_fee = n; }
     return cat;
   }
 
   // ds_settings_v1 (bentuk store.js) <-> peta datar tab settings
   function settingsToFlat(s) {
     var f = {
-      address: s.address, david_wa: s.david_wa, bank_name: (s.bank || {}).bank, bank_no: (s.bank || {}).no,
+      address: s.address, david_wa: s.david_wa, store_hours: s.store_hours, bank_name: (s.bank || {}).bank, bank_no: (s.bank || {}).no,
       bank_holder: (s.bank || {}).name, pay_hours: s.pay_hours
     };
     Object.keys(s.margins || {}).forEach(function (k) { f['margin.' + k] = s.margins[k]; });
@@ -187,7 +211,7 @@
     var s = { bank: {}, margins: {}, distributors: {} };
     Object.keys(map).forEach(function (k) {
       var v = map[k];
-      if (k === 'address' || k === 'david_wa') s[k] = String(v);
+      if (k === 'address' || k === 'david_wa' || k === 'store_hours') s[k] = String(v);
       else if (k === 'bank_name') s.bank.bank = String(v);
       else if (k === 'bank_no') s.bank.no = String(v);
       else if (k === 'bank_holder') s.bank.name = String(v);
@@ -250,7 +274,8 @@
   }
   function status() {
     return { mode: mode(), state: mode() === 'local' ? 'idle' : rt.state, pending: S.queue.length,
-      lastSync: S.last_sync || null, error: S.last_error || null };
+      lastSync: S.last_sync || null, error: S.last_error || null,
+      catalog: cfg ? 'sheet' : (pubUrl() ? 'public' : 'none'), catalogError: rt.pubError || null };
   }
   function emitStatus() { saveS(); emit('ds:sync', status()); }
   function setState(s) { rt.state = s; emitStatus(); }
@@ -288,13 +313,11 @@
   function srvErr(res) {
     var code = res && res.error;
     var msg = code === 'unauthorized' ? 'Token ditolak' : code === 'busy' ? 'Sheet sedang sibuk, coba lagi' :
-      code === 'sheet_not_empty' ? 'Sheet sudah berisi data (products/orders tidak kosong). Seed ditolak, tidak ada yang ditimpa' :
       'Server menolak: ' + (code || 'jawaban kosong');
     var e = mkErr('server', msg); e.code = code; return e;
   }
-  function getOp(c, op) {
-    return req(c.url + (c.url.indexOf('?') < 0 ? '?' : '&') + 'op=' + op + '&token=' + encodeURIComponent(c.token), { method: 'GET' }, PULL_TIMEOUT);
-  }
+  // op admin (ping/pull) lewat POST: token di badan, bukan di URL (T5)
+  function getOp(c, op) { return postOp(c, { op: op }, PULL_TIMEOUT); }
   function postOp(c, body, ms) {
     body.token = c.token;
     return req(c.url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) }, ms || PUSH_TIMEOUT);
@@ -468,10 +491,25 @@
     emit('ds:data', { changed: [tab] });
   }
 
+  // SERIALISASI: kirim (flush) dan tarik (pull) tidak boleh berjalan bersamaan. Bila tarikan berangkat sebelum kirim selesai,
+  // jawabannya (foto sheet yang lebih lama) menimpa perubahan lokal yang sudah terkirim tapi belum terlihat di sheet:
+  // PO yang baru dibuat hilang, status mundur, `chosen` lenyap (bug PO batal saat Terima bayar).
+  var xq = Promise.resolve();
+  function exclusive(fn) { var p = xq.then(fn); xq = p.then(function () { }, function () { }); return p; }
+
   function flush() {
     if (!cfg) return Promise.resolve({ ok: true, skipped: true });
     if (rt.flushing) return rt.flushing;
     if (!S.queue.length) return Promise.resolve({ ok: true, sent: 0 });
+    rt.flushing = exclusive(doFlush).then(function (r) {
+      rt.flushing = null;
+      if (r.needPull) return pull().then(function () { return { ok: true, sent: r.sent }; });
+      return r;
+    });
+    return rt.flushing;
+  }
+  function doFlush() {
+    if (!cfg || !S.queue.length) return Promise.resolve({ ok: true, sent: 0 });
     var c = cfg, ctx = { sent: 0, needPull: false, error: null };
     setState('syncing');
     var chain = Promise.resolve();
@@ -495,17 +533,14 @@
         });
       }).catch(function (e) { ctx.error = e; });
     });
-    rt.flushing = chain.then(function () {
-      rt.flushing = null;
+    return chain.then(function () {
       if (ctx.error) { fail(ctx.error); return { ok: false, error: ctx.error.message, sent: ctx.sent }; }
       S.last_error = S.last_error && /^Ditolak server/.test(S.last_error) ? S.last_error : null;
       if (ctx.sent) S.last_sync = nowIso();
       rt.state = 'idle';
       emitStatus();
-      if (ctx.needPull) return pull().then(function () { return { ok: true, sent: ctx.sent }; });
-      return { ok: true, sent: ctx.sent };
+      return { ok: true, sent: ctx.sent, needPull: ctx.needPull };
     });
-    return rt.flushing;
   }
 
   /* ============================================================ tarik dari sheet */
@@ -582,7 +617,7 @@
       }
 
       // brand
-      if (Array.isArray(tabs.brands) && tabs.brands.length) {
+      if (Array.isArray(tabs.brands)) {
         var beforeB = JSON.stringify(ST.read(DS.KEYS.brands));
         var qb = queued('brands'), localB = {};
         DS.getBrands().forEach(function (b) { localB[b.id] = b; });
@@ -605,8 +640,8 @@
         });
       }
 
-      // katalog (kategori, distributor, produk, brand)
-      var any = ['categories', 'distributors', 'products', 'brands'].some(function (t) { return Array.isArray(tabs[t]) && tabs[t].length; });
+      // katalog (kategori, distributor, produk, brand): tab kosong = katalog kosong
+      var any = ['categories', 'distributors', 'products', 'brands'].some(function (t) { return Array.isArray(tabs[t]); });
       if (any) {
         var cat = buildCatalog(tabs, baseCatalog());
         var sig = sigOf(cat);
@@ -619,7 +654,7 @@
   }
 
   function baseCatalog() {
-    if (!rt.baseCatalog) rt.baseCatalog = clone(root.DS_CATALOG) || { brands: [], categories: [], distributors: [], products: [], colors: {}, sample: true };
+    if (!rt.baseCatalog) rt.baseCatalog = clone(root.DS_CATALOG) || { brands: [], categories: [], distributors: [], products: [], colors: {}, sample: false };
     return rt.baseCatalog;
   }
   // timpa isi window.DS_CATALOG di tempat, supaya referensi lama di app tetap segar
@@ -629,31 +664,92 @@
     Object.keys(cat).forEach(function (k) { if (k !== 'fetched_at') t[k] = cat[k]; });
   }
 
-  function pull() {
+  function pull(opts) {
     if (!cfg) return Promise.resolve({ ok: true, skipped: true });
     if (rt.pulling) return rt.pulling;
-    var c = cfg;
-    setState('syncing');
-    rt.pulling = getOp(c, 'pull').then(function (res) {
+    rt.pulling = exclusive(function () { return doPull(opts); }).then(function (r) { rt.pulling = null; return r; });
+    return rt.pulling;
+  }
+  function doPull(opts) {
+    if (!cfg) return Promise.resolve({ ok: true, skipped: true });
+    var c = cfg, silent = !!(opts && opts.silent) && rt.state === 'idle';
+    if (!silent) setState('syncing');
+    return getOp(c, 'pull').then(function (res) {
       if (!res || !res.ok) throw srvErr(res);
       var changed = applyPull(res.tabs || {});
       S.last_pull_at = S.last_sync = nowIso();
       S.last_error = null;
       rt.state = 'idle';
-      emitStatus();
+      if (silent && !changed.length) saveS(); else emitStatus(); // tarik otomatis tanpa perubahan: jangan memicu render ulang
       if (changed.length) emit('ds:data', { changed: changed });
       return { ok: true, changed: changed };
     }).catch(function (e) {
       fail(e);
       return { ok: false, error: e.message };
-    }).then(function (r) { rt.pulling = null; return r; });
-    return rt.pulling;
+    });
   }
 
-  function syncNow() {
+  function syncNow(opts) {
     if (!cfg) return Promise.resolve({ ok: true, skipped: true });
-    return flush().then(function () { return pull(); });
+    return flush().then(function () { return pull(opts); });
   }
+
+  /* ============================================================ katalog publik (tanpa token) + jalur pesanan publik */
+
+  function pubUrl() {
+    var u = root.DS_PUBLIC && root.DS_PUBLIC.catalogUrl;
+    return typeof u === 'string' && /^https:\/\/script\.google\.com\//i.test(u.trim()) ? u.trim() : null;
+  }
+  function pubGet(query) { var u = pubUrl(); return req(u + (u.indexOf('?') < 0 ? '?' : '&') + query, { method: 'GET' }, PULL_TIMEOUT); }
+  function pubPost(body) {
+    return req(pubUrl(), { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) }, PUSH_TIMEOUT);
+  }
+
+  // Tarik katalog publik (hanya baca). Tidak ada penulisan master.
+  function pullPublic() {
+    if (cfg || !pubUrl()) return Promise.resolve({ ok: true, skipped: true });
+    if (rt.pullingPub) return rt.pullingPub;
+    rt.pullingPub = pubGet('op=catalog').then(function (res) {
+      if (!res || !res.ok || !res.tabs) throw srvErr(res);
+      var stp = res.store || {}, prow = [];
+      if (res.assembly_fee != null) prow.push({ id: 'assembly_fee', value: String(res.assembly_fee) });
+      ['address', 'david_wa', 'store_hours'].forEach(function (k) { if (stp[k]) prow.push({ id: k, value: String(stp[k]) }); });
+      var ptabs = Object.assign({}, res.tabs, { settings: prow });
+      var cat = buildCatalog(ptabs, baseCatalog()), sig = sigOf(cat), changed = [];
+      if (sig !== rt.catSig) { rt.catSig = sig; applyCatalog(cat); changed.push('catalog'); }
+      cat.fetched_at = nowIso();
+      ST.write(K_CAT_PUB, cat);
+      rt.pubError = null; rt.pubAt = Date.now();
+      emit('ds:sync', status());
+      if (changed.length) emit('ds:data', { changed: changed });
+      return { ok: true, changed: changed };
+    }).catch(function (e) {
+      rt.pubError = (e && e.message) || 'Katalog gagal dimuat';
+      emit('ds:sync', status());
+      return { ok: false, error: rt.pubError };
+    }).then(function (r) { rt.pullingPub = null; return r; });
+    return rt.pullingPub;
+  }
+
+  // Jalur publik tanpa token: order_create / order_track / order_customer_action. Kegagalan jaringan TIDAK pernah
+  // diam-diam disimpan lokal; pemanggil menerima { ok:false, network:true } dan harus menampilkannya.
+  var NET_MSG = 'Tidak bisa terhubung ke server. Periksa internet Anda, lalu coba lagi.';
+  function pubCall(fn) {
+    if (!pubUrl()) return Promise.resolve({ ok: false, error: 'no_public_url', message: 'Alamat server toko belum diatur.' });
+    return fn().then(function (res) {
+      if (!res || typeof res !== 'object') return { ok: false, error: 'bad_response', message: 'Jawaban server tidak dikenali.' };
+      if (!res.ok && !res.message) res.message = 'Server menolak: ' + (res.error || 'tanpa keterangan');
+      return res;
+    }, function (e) {
+      return { ok: false, network: true, error: 'network', message: e && e.kind === 'server' ? e.message : NET_MSG };
+    });
+  }
+  DS.pub = {
+    enabled: function () { return !!pubUrl(); },
+    createOrder: function (payload) { return pubCall(function () { return pubPost(Object.assign({}, payload, { op: 'order_create' })); }); },
+    track: function (id, wa, k) { return pubCall(function () { return pubGet('op=order_track&id=' + encodeURIComponent(id) + '&wa=' + encodeURIComponent(wa) + '&k=' + encodeURIComponent(k || '')); }); },
+    action: function (id, wa, k, action, extra) { return pubCall(function () { return pubPost(Object.assign({}, extra, { op: 'order_customer_action', id: id, wa: wa, k: k || '', action: action })); }); }
+  };
 
   /* ============================================================ ready, konfigurasi, seed */
 
@@ -675,6 +771,13 @@
     if (rt.retry || !cfg) return;
     rt.retry = setInterval(function () { if (cfg && S.queue.length && !rt.flushing) flush(); }, RETRY_MS);
     if (rt.retry.unref) rt.retry.unref();
+    // tarik otomatis berkala saat tab terlihat, supaya pesanan baru dari toko publik muncul di Dashboard
+    rt.auto = setInterval(function () {
+      if (!cfg || rt.flushing || rt.pulling) return;
+      if (root.document && root.document.visibilityState === 'hidden') return;
+      syncNow({ silent: true });
+    }, AUTO_PULL_MS);
+    if (rt.auto.unref) rt.auto.unref();
   }
 
   var GS_URL_RE = /^https:\/\/script\.google\.com\//i;
@@ -712,41 +815,47 @@
 
   function disconnect() {
     ST.remove(K_CFG); ST.remove(K_SYNC); ST.remove(K_CAT);
+    if (!pubUrl()) emptyCatalogInPlace();
     cfg = null; S = freshSync(); rt.state = 'idle';
     if (rt.retry) { clearInterval(rt.retry); rt.retry = null; }
+    if (rt.auto) { clearInterval(rt.auto); rt.auto = null; }
     emit('ds:sync', status());
   }
 
-  function seedTabs() {
-    var base = baseCatalog(), demo = DS.buildDemoData(), rows = {};
-    function wrap(list) { return list.map(function (r) { return { id: r.id, record: r }; }); }
-    var flat = settingsToFlat(Object.assign({}, DS.getSettings(), { assembly_fee: base.assembly_fee }));
-    rows.settings = Object.keys(flat).map(function (k) {
-      return { id: k, record: { id: k, value: String(flat[k]), note: k === 'assembly_fee' ? 'CONTOH: biaya rakit belum diketahui' : (k.indexOf('margin.') === 0 ? 'Margin default (%) per kategori' : '') } };
-    });
-    rows.brands = wrap((base.brands || []).map(function (b, i) { return { id: b.id, name: b.name, visible: 'TRUE', distributor_id: b.distributor_id || '', sort: String(i + 1) }; }));
-    rows.categories = wrap((base.categories || []).map(function (c, i) { return { id: c.id, name: c.name, prefix: c.prefix || '', sort: String(i + 1) }; }));
-    rows.distributors = wrap(DS.DISTRIBUTORS.map(function (d) { return { id: d.id, name: d.name, wa: d.wa, note: d.note || '' }; }));
-    rows.products = (base.products || []).map(function (p) { var r = productToRow(p); r.id = r.sku; return { id: r.sku, record: r }; });
-    rows.orders = wrap(demo.orders);
-    rows.purchase_orders = wrap(demo.pos);
-    return rows;
+  // ADMIN: isi bukti transfer dari Drive via Apps Script (butuh token). -> Promise<{ok, mime, base64, ...}|{ok:false, message}>
+  function proofGet(orderId) {
+    if (!cfg) return Promise.resolve({ ok: false, error: 'no_token', message: 'Foto bukti hanya bisa dibuka di Dashboard yang terhubung (token).' });
+    return postOp(cfg, { op: 'proof_get', id: orderId }, 30000).then(function (res) {
+      if (res && res.ok) return res;
+      return { ok: false, error: (res && res.error) || 'server', message: (res && res.message) || (res && res.error === 'unauthorized' ? 'Token ditolak' : 'Server menolak') };
+    }, function (e) { return { ok: false, error: 'network', message: (e && e.message) || 'Gagal menghubungi server' }; });
+  }
+  // ADMIN: kunci Lacak untuk pesanan (membuat bila belum ada). -> Promise<{ok, track_key}>
+  function ensureTrackKey(orderId) {
+    if (!cfg) return Promise.resolve({ ok: false, error: 'no_token' });
+    return postOp(cfg, { op: 'track_key_ensure', id: orderId }, PUSH_TIMEOUT).then(function (res) { return res && res.ok ? res : { ok: false, error: (res && res.error) || 'server' }; }, function () { return { ok: false, error: 'network' }; });
   }
 
-  function seedSheet() {
+  // Hanya membuat tab + header di sheet (tanpa data). Tombol "Siapkan tab sheet".
+  function setupSheet() {
     if (!cfg) return Promise.resolve({ ok: false, error: 'Hubungkan ke Google Sheet dulu' });
-    var tabs = seedTabs();
-    return postOp(cfg, { op: 'seed', tabs: tabs }, 60000).then(function (res) {
+    return postOp(cfg, { op: 'setup' }, 60000).then(function (res) {
       if (!res || !res.ok) throw srvErr(res);
       return pull().then(function (r) { return { ok: true, counts: res.counts || {}, pull: r }; });
     }).catch(function (e) { return { ok: false, error: e.message }; });
   }
 
+  // kosongkan DS_CATALOG di tempat (referensi lama di app tetap sama)
+  function emptyCatalogInPlace() { applyCatalog(buildCatalog({}, baseCatalog())); rt.catSig = null; }
+
   /* ============================================================ UI */
 
   function badgeHtml() {
     var s = status(), cls, txt, tip = '';
-    if (s.mode === 'local') { cls = 'badge--neutral'; txt = 'Sumber data: Lokal'; }
+    if (s.mode === 'local' && s.catalog === 'public') {
+      if (s.catalogError) { cls = 'badge--bad'; txt = 'Katalog gagal dimuat'; tip = s.catalogError; }
+      else { cls = 'badge--ok'; txt = 'Katalog dari Google Sheet (baca saja)'; }
+    } else if (s.mode === 'local') { cls = 'badge--neutral'; txt = 'Sumber data: Lokal'; }
     else if (s.state === 'error' || s.state === 'offline') {
       cls = 'badge--bad'; txt = 'Gagal sinkron (' + s.pending + ' tertunda)'; tip = s.error || '';
     } else if (s.state === 'syncing') { cls = 'badge--info'; txt = 'Sumber data: Google Sheet · menyimpan…'; }
@@ -757,7 +866,7 @@
 
   function statusLine() {
     var s = status();
-    if (s.mode === 'local') return 'Mode lokal: data hanya di browser ini.';
+    if (s.mode === 'local') return 'Mode lokal: pesanan dan pengaturan hanya di browser ini. Katalog: ' + ({ public: 'dari Google Sheet (baca saja)', none: 'kosong (tidak ada sumber)' }[s.catalog] || '-') + '.' + (s.catalogError ? ' Pesan: ' + s.catalogError : '');
     var t = 'Mode Google Sheet. ' + ({ idle: 'Siap', syncing: 'Menyinkron…', error: 'Gagal', offline: 'Tidak terhubung' }[s.state] || s.state) + '. ' +
       s.pending + ' perubahan tertunda.' + (s.lastSync ? ' Terakhir sinkron ' + hhmm(s.lastSync) + '.' : '');
     if (s.error) t += ' Pesan: ' + s.error;
@@ -772,8 +881,8 @@
       '<section class="panel" style="background:var(--surface,#fff);border:1px solid var(--border,#d6d6d6);border-radius:var(--r-md,10px);padding:var(--sp-5,20px);margin-bottom:var(--sp-4,16px)">',
       '<h2>Sumber data</h2>',
       '<p class="muted">Kosongkan URL untuk memakai data di browser ini saja. Isi URL Apps Script untuk menyimpan ke Google Sheet yang bisa dibuka bersama.</p>',
-      '<div class="note wait" role="note"><div><strong>Hanya untuk data CONTOH.</strong> Siapa pun yang punya URL + token bisa membaca dan menulis seluruh isi sheet ',
-      '(order, nama dan WA customer, harga modal, margin). Jangan isi customer, rekening, atau harga modal sungguhan.</div></div>',
+      '<div class="note wait" role="note"><div><strong>URL + token = akses penuh ke seluruh sheet</strong> (order, nama dan WA customer, Harga Distributor, margin). ',
+      'Simpan token di tempat pribadi, jangan di chat atau repo. Ganti DS_TOKEN bila dicurigai bocor.</div></div>',
       '<div class="field"><label class="f" for="' + id + '-url">URL Web App Apps Script</label>',
       '<input class="input" id="' + id + '-url" type="url" autocomplete="off" spellcheck="false" placeholder="https://script.google.com/macros/s/.../exec" value="' + esc(c.url) + '">',
       '<div class="hint">Salin dari Deploy &gt; Manage deployments. Harus berakhiran /exec.</div></div>',
@@ -784,7 +893,7 @@
       '<button type="button" class="btn" data-a="save">Simpan dan hubungkan</button>',
       '<button type="button" class="btn sec" data-a="test">Tes koneksi</button>',
       '<button type="button" class="btn sec" data-a="pull">Tarik ulang</button>',
-      '<button type="button" class="btn sec" data-a="seed">Isi sheet dengan data contoh</button>',
+      '<button type="button" class="btn sec" data-a="setup">Siapkan tab sheet</button>',
       '<button type="button" class="btn danger" data-a="off">Putuskan</button>',
       '</div>',
       '<p class="hint" id="' + id + '-msg" role="status" aria-live="polite"></p>',
@@ -826,21 +935,20 @@
         if (!String(v.token || '').trim()) return Promise.resolve(say('Gagal: Token belum diisi'));
         var n = cfg ? 0 : localCount();
         if (n && root.confirm && !root.confirm('Ada ' + n + ' order/PO di browser ini. Order/PO lokal tidak ikut dipindah ke sheet dan akan hilang dari tampilan setelah tarik data pertama (salinannya disimpan di browser, key ds_local_dropped_v1). Lanjut?')) return Promise.resolve();
-        say('Menghubungkan…');
-        return saveConfig(v).then(function (r) { say(r.ok ? 'Tersimpan. Data ditarik dari sheet.' : (cfg ? 'Tersimpan, tapi tarik data gagal: ' : 'Tidak tersimpan: ') + r.error); });
+        say('Menghubungkan…' + (v.token.length < 32 ? ' PERINGATAN: token hanya ' + v.token.length + ' karakter; gunakan minimal 32 karakter acak (DS_TOKEN di Script Properties).' : ''));
+        return saveConfig(v).then(function (r) { say((r.ok ? 'Tersimpan. Data ditarik dari sheet.' : (cfg ? 'Tersimpan, tapi tarik data gagal: ' : 'Tidak tersimpan: ') + r.error) + (v.token.length < 32 ? ' PERINGATAN: token < 32 karakter, segera ganti.' : '')); });
       },
       pull: function () {
         if (!cfg) return Promise.resolve(say('Belum terhubung ke Google Sheet.'));
         say('Menarik data…');
         return syncNow().then(function () { var s = status(); say(s.state === 'idle' ? 'Selesai.' : 'Gagal: ' + (s.error || s.state)); });
       },
-      seed: function () {
+      setup: function () {
         if (!cfg) return Promise.resolve(say('Simpan URL dan token dulu.'));
-        say('Mengisi sheet…');
-        return seedSheet().then(function (r) {
-          if (!r.ok) return say('Ditolak/gagal: ' + r.error);
-          var n = r.counts || {};
-          say('Sheet terisi: ' + (n.products || 0) + ' produk, ' + (n.orders || 0) + ' order, ' + (n.purchase_orders || 0) + ' PO.');
+        say('Menyiapkan tab…');
+        return setupSheet().then(function (r) {
+          if (!r.ok) return say('Gagal: ' + r.error);
+          say('Tab siap (hanya header; tidak ada data yang ditulis atau ditimpa). Isi data di Google Sheet: lihat PANDUAN-ISI-DATA.md.');
         });
       },
       off: function () {
@@ -871,11 +979,11 @@
     renderSettings: renderSettings,
     badgeHtml: badgeHtml,
     now: syncNow, pull: pull, flush: flush,
-    testConnection: testConnection, seedSheet: seedSheet,
+    testConnection: testConnection, proofGet: proofGet, ensureTrackKey: ensureTrackKey, setupSheet: setupSheet, pullPublic: pullPublic,
     getConfig: function () { return cfg ? { url: cfg.url, token: cfg.token } : null; },
     saveConfig: saveConfig, disconnect: disconnect,
-    _pure: { parseMoney: parseMoney, parseBool: parseBool, productToRow: productToRow, rowToProduct: rowToProduct,
-      buildCatalog: buildCatalog, settingsToFlat: settingsToFlat, flatToSettings: flatToSettings, sigOf: sigOf, seedTabs: seedTabs,
+    _pure: { parseMoney: parseMoney, parseMoneyStrict: parseMoneyStrict, parseBool: parseBool, productToRow: productToRow, rowToProduct: rowToProduct,
+      productProblems: productProblems, buildCatalog: buildCatalog, settingsToFlat: settingsToFlat, flatToSettings: flatToSettings, sigOf: sigOf,
       parseSpec: parseSpec, applyPull: applyPull }
   };
   // Katalog sesuai tampilan publik: buang produk nonaktif dan produk brand yang disembunyikan
@@ -890,7 +998,7 @@
   /* ============================================================ init */
 
   if (cfg) {
-    // cache katalog dari sheet terakhir dipakai dulu; kalau pull gagal, ini yang tampil (bukan catalog.js)
+    // cache katalog dari sheet terakhir dipakai dulu; kalau pull gagal, ini yang tampil (bukan data contoh)
     var cached = ST.read(K_CAT);
     baseCatalog();
     if (cached && Array.isArray(cached.products)) {
@@ -902,6 +1010,18 @@
     var t = setTimeout(fireReady, PULL_TIMEOUT);
     if (t && t.unref) t.unref();
     pull().then(fireReady).then(function () { return flush(); });
+  } else if (pubUrl()) {
+    // tanpa token: katalog publik read-only. Cache terakhir tampil dulu; tarik baru di belakang.
+    baseCatalog();
+    var cachedP = ST.read(K_CAT_PUB);
+    if (cachedP && Array.isArray(cachedP.products)) {
+      var cp = clone(cachedP); delete cp.fetched_at;
+      rt.catSig = sigOf(cp);
+      applyCatalog(cachedP);
+    }
+    var tp = setTimeout(fireReady, PULL_TIMEOUT);
+    if (tp && tp.unref) tp.unref();
+    pullPublic().then(fireReady);
   } else {
     rt.ready = true;
   }
@@ -915,6 +1035,7 @@
   if (root.document && root.document.addEventListener) {
     root.document.addEventListener('visibilitychange', function () {
       if (cfg && root.document.visibilityState === 'visible') syncNow();
+      else if (!cfg && pubUrl() && root.document.visibilityState === 'visible' && (!rt.pubAt || Date.now() - rt.pubAt > 60000)) pullPublic();
     });
   }
 

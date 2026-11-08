@@ -1,14 +1,19 @@
 /* DavidStore Marketplace — prototipe SPA (hash routing). Tanpa library.
-   Data: ../shared/catalog.js (DS_CATALOG). Order ditulis ke localStorage `ds_orders_v1` sesuai prototype/KONTRAK-DATA.md. */
+   Data: DS_CATALOG (diisi sync.js dari Google Sheet; tidak ada produk contoh). Order ditulis ke localStorage `ds_orders_v1` sesuai prototype/KONTRAK-DATA.md. */
 (function () {
   'use strict';
   var CAT = window.DS_CATALOG;
-  var DAVID_WA = '6280000000000'; // PLACEHOLDER — nomor David belum diketahui [?]
+  // Nomor/alamat/jam toko datang dari Pengaturan Dashboard (tab settings) lewat katalog publik; kosong = disembunyikan.
+  function store() { return (window.DS_CATALOG && DS_CATALOG.store) || {}; }
+  function davidWa() { var d = String(store().wa || '').replace(/\D/g, ''); if (d.indexOf('0') === 0) d = '62' + d.slice(1); else if (d.indexOf('8') === 0) d = '62' + d; return /^628\d{7,12}$/.test(d) ? d : ''; }
+  function davidLink(text) { var n = davidWa(); return n ? 'https://wa.me/' + n + '?text=' + encodeURIComponent(text) : ''; } // '' = tidak ada nomor: tautan disembunyikan (hideNoWa)
+  function hideNoWa(root) { $$('a[href=""]', root).forEach(function (a) { a.style.display = 'none'; }); }
   var KEY_ORDERS = 'ds_orders_v1';
   var KEY_CART = 'ds_cart_v1'; // milik marketplace saja, bukan bagian kontrak
   var reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   /* ------------------------------------------------------------ util */
+  function qa(v) { return String(v == null ? '' : v).replace(/["\\]/g, '\\$&'); } // nilai di dalam selector atribut
   function $(s, r) { return (r || document).querySelector(s); }
   function $$(s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -32,8 +37,9 @@
     return CAT.products.filter(prodVisible);
   } // hanya yang boleh tampil
   function lineHidden(l) {
-    if (l.kind === 'rakitan' && l.components) return ['blade', 'fh', 'bh'].some(function (k) { var c = l.components[k], p = c && byId(c.sku); return p ? !prodVisible(p) : false; });
-    var p = byId(l.sku); return p ? !prodVisible(p) : !brandVisible(l.brand);
+    // produk yang sudah tidak ada di katalog (mis. keranjang lama) dianggap tidak lagi dijual
+    if (l.kind === 'rakitan' && l.components) return ['blade', 'fh', 'bh'].some(function (k) { var c = l.components[k], p = c && byId(c.sku); return c ? (!p || !prodVisible(p)) : false; });
+    var p = byId(l.sku); return !p || !prodVisible(p);
   }
   function hiddenCount() { return cart.filter(lineHidden).length; }
   /* ---- foto produk (ADM-15) ---- */
@@ -131,6 +137,14 @@
   function cartCount() { return cart.reduce(function (s, l) { return s + l.qty; }, 0); }
   function cartSubtotal() { return cart.reduce(function (s, l) { return s + l.qty * l.est_price; }, 0); }
 
+  /* ---- jalur pesanan publik (server Google Sheet, tanpa token) ---- */
+  function pubOn() { return !!(window.DS && DS.pub && DS.pub.enabled()); }
+  var lastCreated = null; // pesanan yang baru dibuat (versi customer, dari server)
+  function rememberLast(o, k) { try { sessionStorage.setItem('ds_last_order', JSON.stringify({ id: o.id, wa: o.customer.wa, k: k })); } catch (e) { } }
+  function trackLink(id, wa, k) { return '#/lacak?id=' + encodeURIComponent(id) + '&wa=' + encodeURIComponent(wa) + '&k=' + encodeURIComponent(k || ''); }
+  function readLast() { try { return JSON.parse(sessionStorage.getItem('ds_last_order')); } catch (e) { return null; } }
+  var SAVED_BADGE = '<span class="badge badge--ok" data-saved>' + '✓ Pesanan tersimpan di server</span>';
+
   function newOrderId(orders) {
     var d = jakartaIso(new Date()).slice(0, 10).replace(/-/g, '');
     var pre = 'DS-' + d + '-', max = 0;
@@ -182,7 +196,13 @@
   }
 
   /* ------------------------------------------------------------ shell */
-  var NAV = [['karet', 'Karet'], ['blade', 'Blade'], ['rakit', 'Bet Rakitan'], ['bola', 'Bola'], ['meja', 'Meja'], ['aksesoris', 'Aksesoris']];
+  // NAV dari tab categories (urut sort, maks 6, hanya yang punya produk tampil) + "Bet Rakitan" bila ada blade dan karet
+  function navItems() {
+    var all = vprods(), cats = CAT.categories.filter(function (c) { return all.some(function (p) { return p.category === c.id; }); }).slice(0, 6).map(function (c) { return [c.id, c.name]; });
+    var hasB = all.some(function (p) { return p.category === 'blade'; }), hasK = all.some(function (p) { return p.category === 'karet'; });
+    if (hasB && hasK) cats.splice(Math.min(2, cats.length), 0, ['rakit', 'Bet Rakitan']);
+    return cats;
+  }
   function navHref(id) { return id === 'rakit' ? '#/rakit' : '#/katalog/' + id; }
 
   function renderShell() {
@@ -190,24 +210,25 @@
       '<header class="site-header" id="hdr"><div class="container site-header__in">' +
       '<button class="icon-btn menu-btn" id="btnMenu" aria-label="Buka menu" type="button">' + ico('menu') + '</button>' +
       '<a class="logo" href="#/" aria-label="DavidStore, ke beranda"><img class="logo__img logo__img--solid" src="../assets/logo/logo.svg" alt="DavidStore" height="28"><img class="logo__img logo__img--clear" src="../assets/logo/logo-inverse.svg" alt="" aria-hidden="true" height="28"></a>' +
-      '<nav class="nav" aria-label="Kategori">' + NAV.map(function (n) { return '<a href="' + navHref(n[0]) + '" data-nav="' + n[0] + '">' + n[1] + '</a>'; }).join('') + '<a href="#/lacak" data-nav="lacak">Lacak Pesanan</a></nav>' +
+      '<nav class="nav" id="mainNav" aria-label="Kategori"></nav>' +
       '<form class="search-inline" id="searchInline" role="search"><label class="sr-only" for="qi">Cari produk</label>' + ico('search') + '<input id="qi" type="search" placeholder="Cari blade, karet, brand…" autocomplete="off"></form>' +
       '<button class="icon-btn search-btn" id="btnSearch" aria-label="Cari" type="button">' + ico('search') + '</button>' +
       '<button class="icon-btn" id="btnCart" type="button" aria-label="Keranjang">' + ico('bag') + '<span class="cart-badge" id="badge" hidden aria-live="polite">0</span></button>' +
       '</div></header>';
     $('#footer').innerHTML =
       '<footer class="site-footer"><div class="container"><div><a class="flogo" href="#/"><img src="../assets/logo/logo-inverse.svg" alt="DavidStore" height="28"></a><p>Peralatan tenis meja. Harga estimasi dikonfirmasi setelah cek ketersediaan ke distributor.</p></div>' +
-      '<div><h4>Belanja</h4>' + CAT.categories.slice(0, 5).map(function (c) { return '<div><a href="#/katalog/' + c.id + '">' + c.name + '</a></div>'; }).join('') + '<div><a href="#/rakit">Rakit Bet</a></div></div>' +
-      '<div><h4>Bantuan</h4><div><a href="#/lacak">Lacak Pesanan</a></div><div><a href="' + waLink(DAVID_WA, 'Halo David, saya mau tanya.') + '" target="_blank" rel="noopener">WhatsApp David</a></div></div>' +
-      '<div><h4>Toko</h4><p>Alamat: <span data-sample>[?] diisi David</span></p><p>Jam operasional: <span data-sample>[?] diisi David</span></p><p>WA: <span data-sample>nomor placeholder</span></p></div></div><div class="container site-footer__sync" id="syncBadge"></div></footer>';
+      '<div><h4>Belanja</h4><div id="footCats"></div><div><a href="#/rakit">Rakit Bet</a></div></div>' +
+      '<div><h4>Bantuan</h4><div><a href="#/lacak">Lacak Pesanan</a></div><div id="footWa"></div></div>' +
+      '<div id="footStore"></div></div><div class="container site-footer__sync" id="syncBadge"></div></footer>';
     drawSyncBadge();
+    drawShellLists();
     $('#overlays').innerHTML =
       '<div class="scrim" id="scrim"></div>' +
       '<aside class="drawer" id="cartDrawer" role="dialog" aria-modal="true" aria-labelledby="cartTitle"></aside>' +
       '<aside class="drawer menu-drawer" id="menuDrawer" role="dialog" aria-modal="true" aria-label="Menu"><div class="drawer__head"><h2 data-focus>Menu</h2><button class="icon-btn" data-close aria-label="Tutup menu" type="button">' + ico('x') + '</button></div><div class="drawer__body">' +
-      NAV.map(function (n) { return '<a href="' + navHref(n[0]) + '">' + n[1] + '</a>'; }).join('') + '<a href="#/katalog">Semua produk</a><a href="#/lacak">Lacak Pesanan</a></div></aside>' +
+      '<span id="menuNav"></span><a href="#/lacak">Lacak Pesanan</a></div></aside>' +
       '<div class="search-pop" id="searchPop" role="dialog" aria-modal="true" aria-label="Cari produk"><form id="searchForm"><input id="qm" type="search" placeholder="Cari blade, karet, brand…" aria-label="Cari produk" autocomplete="off"><button class="btn" type="submit">Cari</button><button class="icon-btn" type="button" id="searchClose" aria-label="Tutup pencarian">' + ico('x') + '</button></form>' +
-      '<p class="eyebrow" style="margin-top:20px">Kategori populer</p><div class="chips">' + ['karet', 'blade', 'bola', 'bet-jadi'].map(function (c) { return '<a class="chip" href="#/katalog/' + c + '">' + catName(c) + '</a>'; }).join('') + '</div></div>' +
+      '<p class="eyebrow" style="margin-top:20px">Kategori populer</p><div class="chips" id="popChips"></div></div>' +
       '<aside class="sheet" id="filterSheet" role="dialog" aria-modal="true" aria-label="Filter"></aside>' +
       '<div class="modal" id="modal" role="dialog" aria-modal="true"></div>';
     var s = document.createElement('div'); s.id = 'sentinel'; s.style.cssText = 'position:absolute;top:0;left:0;width:1px;height:40px;pointer-events:none'; document.body.appendChild(s);
@@ -222,7 +243,35 @@
     $('#searchPop').addEventListener('click', function (e) { if (e.target.closest('a')) $('#searchPop').classList.remove('is-open'); });
     $('#searchForm').addEventListener('submit', function (e) { e.preventDefault(); $('#searchPop').classList.remove('is-open'); goSearch($('#qm').value); });
     $('#searchInline').addEventListener('submit', function (e) { e.preventDefault(); goSearch($('#qi').value); });
+    drawNav();
     updateBadge();
+  }
+  function markNav() {
+    var r = parseHash(), v = r.segs[0] || '';
+    $$('.nav a').forEach(function (a) { var on = (a.dataset.nav === r.segs[1] && v === 'katalog') || (a.dataset.nav === 'rakit' && v === 'rakit') || (a.dataset.nav === 'lacak' && v === 'lacak'); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
+  }
+  function drawNav() { // header + menu mobile dibangun dari katalog; kosong = hanya "Lacak Pesanan"
+    var items = navItems(), nav = $('#mainNav'), mn = $('#menuNav');
+    if (nav) nav.innerHTML = items.map(function (n) { return '<a href="' + esc(navHref(n[0])) + '" data-nav="' + esc(n[0]) + '">' + esc(n[1]) + '</a>'; }).join('') + '<a href="#/lacak" data-nav="lacak">Lacak Pesanan</a>';
+    if (mn) mn.innerHTML = items.map(function (n) { return '<a href="' + esc(navHref(n[0])) + '">' + esc(n[1]) + '</a>'; }).join('') + (items.length ? '<a href="#/katalog">Semua produk</a>' : '');
+    markNav();
+  }
+  function drawStore() { // kolom Toko + tautan WhatsApp di footer; baris kosong tidak ditampilkan
+    var st = store(), wa = davidWa(), rows = '';
+    if (st.address) rows += '<p>Alamat: ' + esc(st.address) + '</p>';
+    if (st.hours) rows += '<p>Jam operasional: ' + esc(st.hours) + '</p>';
+    if (wa) rows += '<p>WA: <a href="' + esc(davidLink('Halo David, saya mau tanya.')) + '" target="_blank" rel="noopener">+' + esc(wa) + '</a></p>';
+    var fs = $('#footStore'); if (fs) { fs.innerHTML = rows ? '<h4>Toko</h4>' + rows : ''; fs.style.display = rows ? '' : 'none'; }
+    var fw = $('#footWa'); if (fw) fw.innerHTML = wa ? '<a href="' + esc(davidLink('Halo David, saya mau tanya.')) + '" target="_blank" rel="noopener">WhatsApp David</a>' : '';
+  }
+  function drawShellLists() {
+    drawNav(); drawStore(); // daftar kategori di footer dan kolom cari: hanya kategori yang punya produk tampil
+    var cats = CAT.categories.filter(function (c) { return vprods().some(function (p) { return p.category === c.id; }); });
+    var f = $('#footCats'); if (f) f.innerHTML = cats.slice(0, 5).map(function (c) { return '<div><a href="#/katalog/' + esc(c.id) + '">' + esc(c.name) + '</a></div>'; }).join('');
+    var pc = $('#popChips'); if (pc) pc.innerHTML = cats.slice(0, 4).map(function (c) { return '<a class="chip" href="#/katalog/' + esc(c.id) + '">' + esc(c.name) + '</a>'; }).join('');
+  }
+  function emptyCatalogHtml(back) {
+    return '<div class="empty">' + ico('info') + '<p><b>Katalog sedang disiapkan</b></p><p class="hint">Produk akan tampil di sini setelah David selesai mengisinya. Silakan kembali lagi nanti.</p>' + (back ? '<a class="btn btn--secondary" href="#/">Ke beranda</a>' : '') + '</div>';
   }
   function drawSyncBadge() { var b = $('#syncBadge'); if (b && window.DS && DS.sync && typeof DS.sync.badgeHtml === 'function') { try { b.innerHTML = DS.sync.badgeHtml(); } catch (e) { } } }
   function goSearch(q) { q = String(q || '').trim(); location.hash = '#/katalog' + (q ? '?q=' + encodeURIComponent(q) : ''); }
@@ -298,7 +347,7 @@
   function priceNote(p) { return p.price_status === 'P' ? 'perkiraan kasar' : 'estimasi'; }
   function card(p, i, feat) {
     var mulai = (p.price_to || p.price_from) ? '<small>mulai </small>' : '';
-    return '<a class="card' + (feat ? ' card--feat' : '') + '" href="#/produk/' + p.slug + '" data-reveal style="--i:' + Math.min(i || 0, 8) + '" data-sample title="' + esc(p.brand + ' ' + p.name) + '">' +
+    return '<a class="card' + (feat ? ' card--feat' : '') + '" href="#/produk/' + p.slug + '" data-reveal style="--i:' + Math.min(i || 0, 8) + '" title="' + esc(p.brand + ' ' + p.name) + '">' +
       '<div class="card__img">' + photo(p) + '<span class="chip-av">Via konfirmasi</span>' + (imgOf(p) ? '' : '<span class="foto">Foto segera</span>') + '</div>' +
       '<div class="card__body"><div class="card__brand">' + esc(p.brand) + '</div><div class="card__name">' + esc(p.name) + '</div><div class="card__spec">' + esc(specLine(p)) + '</div>' +
       '<div class="card__price">' + mulai + priceHtml(p.price) + '</div><div class="card__est">' + priceNote(p) + ' · harga final dikonfirmasi</div></div></a>';
@@ -332,9 +381,10 @@
     (views[v] || viewNotFound)(app, r);
     if (!app.firstElementChild) viewNotFound(app, r);
     app.firstElementChild.classList.add('view-in');
+    hideNoWa(app);
     initReveal(app);
     window.scrollTo(0, 0);
-    document.title = (document.title.split(' — ')[0] === 'DavidStore' ? '' : '') + 'DavidStore — Peralatan Tenis Meja (prototipe)';
+    document.title = (document.title.split(' — ')[0] === 'DavidStore' ? '' : '') + 'DavidStore — Peralatan Tenis Meja';
   }
   function navigate(hash, replace) {
     if (replace) { history.replaceState(null, '', hash); route2(); } else location.hash = hash;
@@ -346,36 +396,43 @@
   /* ------------------------------------------------------------ BERANDA */
   function viewHome(app) {
     var seen = false; try { seen = sessionStorage.getItem('ds_hero_seen') === '1'; sessionStorage.setItem('ds_hero_seen', '1'); } catch (e) { }
-    var brandsHtml = CAT.brands.filter(function (b) { return brandVisible(b.name); }).map(function (b) { return '<span>' + esc(b.name) + '</span>'; }).join('');
+    var all = vprods(), empty = !all.length;
+    function has(cat) { return all.some(function (p) { return p.category === cat; }); }
+    var seenB = {}, brandNames = [];
+    all.forEach(function (p) { if (!seenB[p.brand]) { seenB[p.brand] = 1; brandNames.push(p.brand); } });
+    brandNames.sort();
+    var brandsHtml = brandNames.map(function (n) { return '<span>' + esc(n) + '</span>'; }).join('');
     var tiles = [
       ['karet', 'Karet', 'tile--a tile--big', 'Inverted, anti-spin, tensor'], ['blade', 'Blade', 'tile--b tile--tall', 'Kayu & karbon'],
       ['rakit', 'Bet Rakitan', 'tile--c', 'Blade + 2 karet'], ['bola', 'Bola', 'tile--d', '3-star & latihan'],
       ['meja', 'Meja & Net', 'tile--e', 'Meja, net, tiang'], ['tas', 'Tas & Cover', 'tile--b', ''], ['sepatu', 'Sepatu', 'tile--c', ''], ['latihan', 'Robot & Latihan', 'tile--d', '']
-    ];
-    var feat = ['butterfly-viscaria', 'butterfly-tenergy-05-05-fx', 'donic-bluefire-jp01-turbo', 'andro-rasanter-r47', 'stiga-dna-platinum-m'].map(bySlug).filter(prodVisible);
-    var karet = vprods().filter(function (p) { return p.category === 'karet'; }).slice(0, 10);
-    var blade = vprods().filter(function (p) { return p.category === 'blade'; }).slice(0, 10);
+    ].filter(function (t) { return t[0] === 'rakit' ? (has('blade') && has('karet')) : has(t[0]); });
+    var canRakit = has('blade') && has('karet');
+    var feat = all.slice(-5).reverse(); // produk terbaru = lima baris terakhir di sheet
+    var karet = all.filter(function (p) { return p.category === 'karet'; }).slice(0, 10);
+    var blade = all.filter(function (p) { return p.category === 'blade'; }).slice(0, 10);
     var steps = [['Pesan', 'Pilih produk, harga yang tampil adalah estimasi.'], ['David cek ketersediaan', 'Pesanan diteruskan ke distributor.'], ['Harga final via WhatsApp', 'Anda terima harga final + ongkir.'], ['Transfer', 'Transfer ke rekening David, unggah bukti.'], ['Dikirim', 'Barang tiba di David, lalu dikirim ke Anda.']];
     app.innerHTML =
       '<section class="hero' + (seen ? ' no-anim' : '') + '"><div class="hero__court"></div><div class="container hero__in">' +
       '<div><h1 class="display"><span class="ln" style="--k:0"><span style="--k:0">Alat tenis meja</span></span><span class="ln"><span style="--k:1">pilihan pemain</span></span><span class="ln"><span style="--k:2">klub.</span></span></h1>' +
       '<p class="hero__lead">Blade dan karet dari brand yang dipakai di klub. Harga estimasi dulu, David cek ketersediaan, baru harga final.</p>' +
-      '<div class="hero__cta"><a class="btn btn--light" href="#/rakit">Rakit Bet Sendiri ' + ico('right', 'ico arrow') + '</a><a class="btn btn--text" style="color:#fff" href="#/katalog/karet">Lihat semua karet</a></div></div>' +
+      '<div class="hero__cta">' + (empty ? '' : '<a class="btn btn--light" href="#/' + (canRakit ? 'rakit' : 'katalog') + '">' + (canRakit ? 'Rakit Bet Sendiri ' : 'Lihat katalog ') + ico('right', 'ico arrow') + '</a>' + (has('karet') ? '<a class="btn btn--text" style="color:#fff" href="#/katalog/karet">Lihat semua karet</a>' : '')) + '</div></div>' +
       '<div class="hero__art"><svg class="trail" viewBox="0 0 480 300" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><path class="hero__ballpath" d="M20 250 C 120 20, 300 10, 440 200"/><circle class="hero__ball" r="10" cx="0" cy="0"/></svg>' +
       '<div class="bet" role="img" aria-label="Bet tenis meja, sisi merah dan hitam">' + betMini('Merah', 'Hitam') + '</div></div></div></section>' +
-      '<div class="marquee" aria-label="Brand yang tersedia"><div class="marquee__track"><div class="marquee__set">' + brandsHtml + '</div><div class="marquee__set" aria-hidden="true">' + brandsHtml + '</div></div></div>' +
-      '<section class="section"><div class="container"><div class="section__head"><h2>Belanja per kategori</h2></div><div class="bento">' +
+      (brandsHtml ? '<div class="marquee" aria-label="Brand yang tersedia"><div class="marquee__track"><div class="marquee__set">' + brandsHtml + '</div><div class="marquee__set" aria-hidden="true">' + brandsHtml + '</div></div></div>' : '') +
+      (empty ? '<section class="section"><div class="container">' + emptyCatalogHtml(false) + '</div></section>' : '') +
+      (tiles.length ? '<section class="section"><div class="container"><div class="section__head"><h2>Belanja per kategori</h2></div><div class="bento">' +
       tiles.map(function (t, i) { return '<a class="tile ' + t[2] + '" href="' + navHref(t[0]) + '" data-reveal style="--i:' + i + '"><div class="art"><svg viewBox="0 0 120 120" stroke-linecap="round" stroke-linejoin="round">' + (PH[t[0] === 'rakit' ? 'rakit' : t[0]]) + '</svg></div><h3>' + t[1] + '</h3>' + (t[3] ? '<small>' + t[3] + '</small>' : '') + '</a>'; }).join('') +
-      '</div></div></section>' +
+      '</div></div></section>' : '') +
       '<section class="section" style="padding-top:0"><div class="container"><div class="section__head"><h2>Cara pesan di DavidStore</h2></div><div class="steps">' +
       steps.map(function (s, i) { return '<div class="step" data-reveal style="--i:' + i + '"><b>' + (i + 1) + '</b><div><h3>' + s[0] + '</h3><p>' + s[1] + '</p></div></div>'; }).join('') + '</div>' +
       '<p class="hint" style="margin-top:16px">David tidak menyimpan stok. Setiap pesanan dicek dulu ke distributor, jadi Anda tidak membayar sebelum ketersediaan jelas.</p></div></section>' +
-      '<section class="section" style="padding-top:0"><div class="container"><div class="section__head"><h2>Produk unggulan</h2><a class="btn btn--text" href="#/katalog">Lihat semua</a></div><div class="feat-grid">' +
-      feat.map(function (p, i) { return card(p, i, i === 0); }).join('') + '</div></div></section>' +
-      '<section class="section" style="padding-top:0"><div class="container"><div class="section__head"><h2>Karet</h2><a class="btn btn--text" href="#/katalog/karet">Lihat semua</a></div><div class="carousel">' + karet.map(function (p, i) { return card(p, i); }).join('') + '</div></div></section>' +
-      '<section class="section" style="padding-top:0"><div class="container"><div class="banner" data-reveal><div><h2>Rakit bet sendiri</h2><p>Pilih blade, karet forehand, dan karet backhand. Kami rakit dan sistem mengecek aturan warna ITTF.</p><a class="btn btn--light" href="#/rakit">Mulai Merakit ' + ico('right', 'ico arrow') + '</a></div>' +
-      '<div class="banner__art" aria-hidden="true"><svg viewBox="0 0 120 120" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round">' + PH.karet + '</svg><svg viewBox="0 0 120 120" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round">' + PH.blade + '</svg><svg viewBox="0 0 120 120" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round">' + PH.karet + '</svg></div></div></div></section>' +
-      '<section class="section" style="padding-top:0"><div class="container"><div class="section__head"><h2>Blade</h2><a class="btn btn--text" href="#/katalog/blade">Lihat semua</a></div><div class="carousel">' + blade.map(function (p, i) { return card(p, i); }).join('') + '</div></div></section>';
+      (feat.length ? '<section class="section" style="padding-top:0"><div class="container"><div class="section__head"><h2>Produk terbaru</h2><a class="btn btn--text" href="#/katalog">Lihat semua</a></div><div class="feat-grid">' +
+      feat.map(function (p, i) { return card(p, i, i === 0); }).join('') + '</div></div></section>' : '') +
+      (karet.length ? '<section class="section" style="padding-top:0"><div class="container"><div class="section__head"><h2>Karet</h2><a class="btn btn--text" href="#/katalog/karet">Lihat semua</a></div><div class="carousel">' + karet.map(function (p, i) { return card(p, i); }).join('') + '</div></div></section>' : '') +
+      (canRakit ? '<section class="section" style="padding-top:0"><div class="container"><div class="banner" data-reveal><div><h2>Rakit bet sendiri</h2><p>Pilih blade, karet forehand, dan karet backhand. Kami rakit dan sistem mengecek aturan warna ITTF.</p><a class="btn btn--light" href="#/rakit">Mulai Merakit ' + ico('right', 'ico arrow') + '</a></div>' +
+      '<div class="banner__art" aria-hidden="true"><svg viewBox="0 0 120 120" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round">' + PH.karet + '</svg><svg viewBox="0 0 120 120" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round">' + PH.blade + '</svg><svg viewBox="0 0 120 120" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round">' + PH.karet + '</svg></div></div></div></section>' : '') +
+      (blade.length ? '<section class="section" style="padding-top:0"><div class="container"><div class="section__head"><h2>Blade</h2><a class="btn btn--text" href="#/katalog/blade">Lihat semua</a></div><div class="carousel">' + blade.map(function (p, i) { return card(p, i); }).join('') + '</div></div></section>' : '');
   }
 
   /* ------------------------------------------------------------ KATALOG */
@@ -439,6 +496,7 @@
   var FLABEL = { brand: '', th: 'mm', col: '', type: '', speed: '', handle: '', size: 'EU ' };
 
   function viewCatalog(app, r) {
+    if (!vprods().length) { app.innerHTML = '<div class="container page">' + emptyCatalogHtml(true) + '</div>'; return; }
     var f = readFilters(r), list = sortList(applyFilters(f), f.sort), total = list.length;
     var title = f.cat ? catName(f.cat) : (f.q ? 'Hasil pencarian' : 'Semua produk');
     var chips = [];
@@ -449,7 +507,7 @@
     var sortSel = '<label class="sr-only" for="sort">Urutkan</label><select class="select" id="sort"><option value="">Urutkan: Relevan</option><option value="asc"' + (f.sort === 'asc' ? ' selected' : '') + '>Harga terendah</option><option value="desc"' + (f.sort === 'desc' ? ' selected' : '') + '>Harga tertinggi</option><option value="az"' + (f.sort === 'az' ? ' selected' : '') + '>Nama A–Z</option></select>';
     app.innerHTML = '<div class="container page"><div class="cat-head"><div><h1 class="page__title">' + esc(title) + '</h1><p class="hint num" id="cnt">' + total + ' produk · harga adalah estimasi</p></div>' +
       '<div class="toolbar"><button class="btn btn--secondary btn--sm filter-btn" id="btnFilter" type="button">' + ico('filter') + 'Filter' + (chips.length ? ' (' + chips.length + ')' : '') + '</button>' + sortSel + '</div></div>' +
-      (f.cat ? '' : '<div class="active-chips">' + CAT.categories.map(function (c) { return '<a class="chip" href="#/katalog/' + c.id + '">' + c.name + '</a>'; }).join('') + '</div>') +
+      (f.cat ? '' : '<div class="active-chips">' + CAT.categories.map(function (c) { return '<a class="chip" href="#/katalog/' + esc(c.id) + '">' + esc(c.name) + '</a>'; }).join('') + '</div>') +
       '<div class="catalog"><aside class="filters" id="filters" aria-label="Filter">' + filtersHtml(f) + '</aside><div><div class="active-chips" id="chips">' + chips.join('') + (chips.length ? '<button class="btn btn--text" type="button" data-rm="all">Hapus semua</button>' : '') + '</div><div class="grid-wrap" id="gw">' + gridHtml(shown, total, f) + '</div></div></div></div>';
 
     function go(nf, quiet) {
@@ -517,7 +575,7 @@
     p.options.forEach(function (o) { if (o.values.length === 1) sel[o.key] = o.values[0]; });
     var rakit = (p.category === 'blade' || p.category === 'karet');
     app.innerHTML = '<div class="container page has-buybar"><a class="crumb" href="#/katalog/' + p.category + '">' + ico('left') + ' ' + catName(p.category) + '</a>' +
-      '<div class="pd"><div><div class="pd__img" id="pdImg" data-sample>' + photo(p) + (imgOf(p) ? '' : '<span class="foto">Foto segera</span>') + '</div>' + (imgOf(p) ? '<p class="hint pd__ref">Foto referensi</p>' : '') + '</div>' +
+      '<div class="pd"><div><div class="pd__img" id="pdImg">' + photo(p) + (imgOf(p) ? '' : '<span class="foto">Foto segera</span>') + '</div>' + (imgOf(p) ? '<p class="hint pd__ref">Foto referensi</p>' : '') + '</div>' +
       '<div class="pd__info"><div class="eyebrow">' + esc(p.brand) + '</div><h1>' + esc(p.name) + '</h1>' +
       '<div class="pd__price num">' + ((p.price_to || p.price_from) ? '<small style="font-family:var(--font-sans);font-size:14px;font-weight:500;color:var(--text-muted)">mulai </small>' : '') + priceHtml(p.price) + '</div>' +
       '<div class="pd__est">' + (p.price_status === 'P' ? 'Perkiraan kasar, belum ada harga pasti di Indonesia. ' : 'Harga estimasi. ') + 'Harga final dikonfirmasi setelah cek ketersediaan ke distributor.' + (p.price_to ? ' Kisaran di pasar sampai ' + rupiah(p.price_to) + '.' : '') + '</div>' +
@@ -527,15 +585,15 @@
       '<details class="acc"><summary>Deskripsi' + ico('down') + '</summary><div class="acc__body">' + esc(p.brand + ' ' + p.name + ' — ' + catName(p.category) + '. ' + (p.note || 'Deskripsi lengkap menyusul dari David.')) + '</div></details>' +
       '<details class="acc"><summary>Cara pesan' + ico('down') + '</summary><div class="acc__body">Pesan tanpa bayar dulu. David cek ketersediaan ke distributor, mengirim harga final lewat WhatsApp, Anda transfer, lalu barang dikirim setelah tiba di David.</div></details>' +
       (rakit ? '<details class="acc"><summary>Pakai di Rakit Bet' + ico('down') + '</summary><div class="acc__body">Gabungkan dengan blade dan karet lain. <a href="#/rakit?' + (p.category === 'blade' ? 'blade=' : 'fh=') + p.sku + '">Rakit bet dengan ' + esc(p.name) + '</a></div></details>' : '') +
-      '</div><p style="margin-top:16px"><a class="btn btn--text" target="_blank" rel="noopener" href="' + waLink(DAVID_WA, 'Halo David, saya tanya produk ' + p.brand + ' ' + p.name + ' (' + p.sku + ').') + '">' + ico('wa') + 'Tanya David</a></p></div></div></div>';
+      '</div><p style="margin-top:16px"><a class="btn btn--text" target="_blank" rel="noopener" href="' + davidLink('Halo David, saya tanya produk ' + p.brand + ' ' + p.name + ' (' + p.sku + ').') + '">' + ico('wa') + 'Tanya David</a></p></div></div></div>';
 
     function missing() { return p.options.filter(function (o) { return !sel[o.key]; })[0]; }
     function draw() {
       var oh = '';
       p.options.forEach(function (o) {
         oh += '<fieldset class="optgroup"><legend>' + esc(o.label) + (o.key === 'handle' ? ' <button class="icon-btn" type="button" style="width:28px;height:28px;vertical-align:middle" data-tip="FL = flared (melebar di ujung) · ST = straight (lurus) · AN = anatomic · CS = penhold Cina" aria-label="Arti handle">' + ico('info') + '</button>' : '') + '</legend>';
-        if (o.type === 'swatch') oh += '<div class="swatches">' + o.values.map(function (v) { return '<button class="sw" type="button" data-k="' + o.key + '" data-v="' + v + '" aria-pressed="' + (sel[o.key] === v) + '"><i class="' + colorCls(v) + '"></i>' + v + '</button>'; }).join('') + '</div>';
-        else oh += '<div class="seg">' + o.values.map(function (v) { return '<button type="button" data-k="' + o.key + '" data-v="' + v + '" aria-pressed="' + (sel[o.key] === v) + '">' + v + '</button>'; }).join('') + '</div>';
+        if (o.type === 'swatch') oh += '<div class="swatches">' + o.values.map(function (v) { return '<button class="sw" type="button" data-k="' + o.key + '" data-v="' + esc(v) + '" aria-pressed="' + (sel[o.key] === v) + '"><i class="' + colorCls(v) + '"></i>' + v + '</button>'; }).join('') + '</div>';
+        else oh += '<div class="seg">' + o.values.map(function (v) { return '<button type="button" data-k="' + o.key + '" data-v="' + esc(v) + '" aria-pressed="' + (sel[o.key] === v) + '">' + esc(v) + '</button>'; }).join('') + '</div>';
         oh += '</fieldset>';
       });
       oh += '<fieldset class="optgroup"><legend>Jumlah</legend><div class="qty"><button type="button" data-qty="-1" aria-label="Kurangi">' + ico('minus') + '</button><output>' + qty + '</output><button type="button" data-qty="1" aria-label="Tambah">' + ico('plus') + '</button></div></fieldset>';
@@ -547,7 +605,7 @@
     draw();
     app.addEventListener('click', function (e) {
       var b = e.target.closest('[data-k]');
-      if (b && $('#opts').contains(b)) { var k = b.dataset.k; sel[k] = sel[k] === b.dataset.v ? sel[k] : b.dataset.v; draw(); var again = $('[data-k="' + k + '"][data-v="' + sel[k] + '"]'); if (again) again.focus(); return; }
+      if (b && $('#opts').contains(b)) { var k = b.dataset.k; sel[k] = sel[k] === b.dataset.v ? sel[k] : b.dataset.v; draw(); var again = $('[data-k="' + qa(k) + '"][data-v="' + qa(sel[k]) + '"]'); if (again) again.focus(); return; }
       var q = e.target.closest('[data-qty]'); if (q) { qty = Math.max(1, Math.min(99, qty + (+q.dataset.qty))); draw(); $('[data-qty="' + q.dataset.qty + '"]').focus(); return; }
       var tip = e.target.closest('[data-tip]'); if (tip) { toast(tip.dataset.tip); return; }
       var add = e.target.closest('#btnAdd');
@@ -577,7 +635,7 @@
     return c === 'Hitam';
   }
   function rakitTotal() {
-    var t = CAT.assembly_fee, b = R.blade.sku && byId(R.blade.sku), f = R.fh.sku && byId(R.fh.sku), h = R.bh.sku && byId(R.bh.sku);
+    var t = CAT.assembly_fee || 0, b = R.blade.sku && byId(R.blade.sku), f = R.fh.sku && byId(R.fh.sku), h = R.bh.sku && byId(R.bh.sku);
     return t + (b ? b.price : 0) + (f ? f.price : 0) + (h ? h.price : 0);
   }
   function rakitDone(step) {
@@ -591,6 +649,9 @@
     return !!(a && b && a !== b && (a === 'Hitam' || b === 'Hitam'));
   }
   function viewRakit(app, r) {
+    if (!vprods().some(function (p) { return p.category === 'blade'; }) || !vprods().some(function (p) { return p.category === 'karet'; })) {
+      app.innerHTML = '<div class="container page"><a class="crumb" href="#/">' + ico('left') + ' Beranda</a>' + emptyCatalogHtml(true) + '</div>'; return;
+    }
     R = { blade: {}, fh: {}, bh: {} }; rkStep = 1;
     var qb = r.q.get('blade'), qf = r.q.get('fh');
     if (qb && prodVisible(byId(qb))) { R.blade.sku = qb; var o = optVals(byId(qb), 'handle'); if (o.length === 1) R.blade.handle = o[0]; rkStep = 2; }
@@ -616,9 +677,9 @@
       rows += row('Blade ' + (b ? esc(b.name) + (R.blade.handle ? ' · ' + R.blade.handle : '') : ''), b ? b.price : null);
       rows += row('Karet FH ' + (f ? esc(f.name) + ' · ' + esc(R.fh.color || '?') + ' ' + esc(R.fh.thickness || '') : ''), f ? f.price : null);
       rows += row('Karet BH ' + (h ? esc(h.name) + ' · ' + esc(R.bh.color || '?') + ' ' + esc(R.bh.thickness || '') : ''), h ? h.price : null);
-      rows += row('Perakitan + lem + sealing <span class="hint" data-sample>(contoh)</span>', CAT.assembly_fee);
+      rows += CAT.assembly_fee == null ? '<div class="sumrow"><span>Perakitan + lem + sealing</span><span class="hint">[?] dikonfirmasi David</span></div>' : row('Perakitan + lem + sealing', CAT.assembly_fee);
       var t = rakitTotal(), changed = lastTotal !== null && lastTotal !== t; lastTotal = t;
-      $('#rkPrice').innerHTML = rows + '<div class="sumrow total"><span>Total estimasi (Rp)</span><span class="num"><span class="roll"><span class="' + (changed ? 'roll__v' : '') + '">' + num(t) + '</span></span></span></div><p class="hint" style="font-size:13px">Harga estimasi. Final dikonfirmasi setelah cek ketersediaan.</p>';
+      $('#rkPrice').innerHTML = rows + '<div class="sumrow total"><span>Total estimasi (Rp)</span><span class="num"><span class="roll"><span class="' + (changed ? 'roll__v' : '') + '">' + num(t) + '</span></span></span></div><p class="hint" style="font-size:13px">Harga estimasi' + (CAT.assembly_fee == null ? ', belum termasuk biaya rakit' : '') + '. Final dikonfirmasi setelah cek ketersediaan.</p>';
     }
     function stepsBar() {
       var names = ['Blade', 'Karet FH', 'Karet BH', 'Perakitan'];
@@ -635,17 +696,17 @@
       var selOpts = cat === 'karet' ? ['', 'Inverted', 'Anti-spin'] : ['', 'OFF', 'ALL'];
       return '<div class="field" style="margin-bottom:12px"><label for="qf">Filter cepat: ' + (cat === 'karet' ? 'tipe' : 'kecepatan') + '</label><select class="select" id="qf" data-cat="' + cat + '">' + selOpts.map(function (v) { return '<option value="' + v + '"' + (fv === v ? ' selected' : '') + '>' + (v || 'Semua') + '</option>'; }).join('') + '</select></div>' +
         '<div class="plist">' + items.map(function (p) {
-          return '<button class="prow" type="button" data-pick="' + p.sku + '" aria-pressed="' + (cur === p.sku) + '"><span class="prow__img">' + photo(p) + '</span><span><b>' + esc(p.brand + ' ' + p.name) + '</b><small>' + esc(specLine(p)) + '</small></span><span class="p">' + ((p.price_to || p.price_from) ? '<small style="font-weight:500;color:var(--text-muted)">mulai </small>' : '') + num(p.price) + '</span></button>';
+          return '<button class="prow" type="button" data-pick="' + esc(p.sku) + '" aria-pressed="' + (cur === p.sku) + '"><span class="prow__img">' + photo(p) + '</span><span><b>' + esc(p.brand + ' ' + p.name) + '</b><small>' + esc(specLine(p)) + '</small></span><span class="p">' + ((p.price_to || p.price_from) ? '<small style="font-weight:500;color:var(--text-muted)">mulai </small>' : '') + num(p.price) + '</span></button>';
         }).join('') + '</div>';
     }
     function optsFor(side) {
       var s = R[side], p = s.sku && byId(s.sku); if (!p) return '';
       var h = '';
       if (side === 'blade') {
-        h += '<fieldset class="optgroup"><legend>Handle</legend><div class="seg">' + optVals(p, 'handle').map(function (v) { return '<button type="button" data-o="handle" data-v="' + v + '" aria-pressed="' + (s.handle === v) + '">' + v + '</button>'; }).join('') + '</div></fieldset>';
+        h += '<fieldset class="optgroup"><legend>Handle</legend><div class="seg">' + optVals(p, 'handle').map(function (v) { return '<button type="button" data-o="handle" data-v="' + esc(v) + '" aria-pressed="' + (s.handle === v) + '">' + esc(v) + '</button>'; }).join('') + '</div></fieldset>';
       } else {
-        h += '<fieldset class="optgroup"><legend>Ketebalan sponge (mm)</legend><div class="seg">' + optVals(p, 'thickness').map(function (v) { return '<button type="button" data-o="thickness" data-v="' + v + '" aria-pressed="' + (s.thickness === v) + '">' + v + '</button>'; }).join('') + '</div></fieldset>';
-        h += '<fieldset class="optgroup"><legend>Warna</legend><div class="swatches">' + optVals(p, 'color').map(function (v) { var ok = colorAllowed(side, v); return '<button class="sw" type="button" data-o="color" data-v="' + v + '" aria-pressed="' + (s.color === v) + '"' + (ok ? '' : ' aria-disabled="true"') + '><i class="' + colorCls(v) + '"></i>' + v + '</button>'; }).join('') + '</div>' +
+        h += '<fieldset class="optgroup"><legend>Ketebalan sponge (mm)</legend><div class="seg">' + optVals(p, 'thickness').map(function (v) { return '<button type="button" data-o="thickness" data-v="' + esc(v) + '" aria-pressed="' + (s.thickness === v) + '">' + esc(v) + '</button>'; }).join('') + '</div></fieldset>';
+        h += '<fieldset class="optgroup"><legend>Warna</legend><div class="swatches">' + optVals(p, 'color').map(function (v) { var ok = colorAllowed(side, v); return '<button class="sw" type="button" data-o="color" data-v="' + esc(v) + '" aria-pressed="' + (s.color === v) + '"' + (ok ? '' : ' aria-disabled="true"') + '><i class="' + colorCls(v) + '"></i>' + v + '</button>'; }).join('') + '</div>' +
           '<p class="hint" style="margin-top:8px">' + FLAG + '</p></fieldset>';
         var other = R[side === 'fh' ? 'bh' : 'fh'].color;
         if (other && optVals(p, 'color').every(function (c) { return !colorAllowed(side, c); })) h += '<div class="note note--bad" style="margin-top:8px">' + ico('alert') + '<span>Karet ini tidak punya warna yang sesuai dengan sisi lain (' + esc(other) + '). Pilih karet lain atau ubah warna sisi lain.</span></div>';
@@ -661,7 +722,7 @@
         var ok = rakitValid();
         h = '<h2 style="font-size:20px;margin-bottom:12px">Perakitan</h2>' +
           '<div class="note ' + (ok ? 'note--ok' : 'note--bad') + '">' + ico(ok ? 'check' : 'alert') + '<span>' + (ok ? 'Kombinasi warna sesuai aturan ITTF: ' + esc(R.fh.color) + ' (FH) dan ' + esc(R.bh.color) + ' (BH).' : 'Warna belum sah. ' + FLAG) + '</span></div>' +
-          '<p class="hint" style="margin-top:12px">Ketiga komponen masuk keranjang sebagai satu baris. Biaya rakit adalah angka contoh; David yang menentukan. Jika salah satu komponen tidak tersedia, seluruh rakitan ditandai tidak tersedia sampai David menawarkan pengganti.</p>';
+          '<p class="hint" style="margin-top:12px">Ketiga komponen masuk keranjang sebagai satu baris. Biaya rakit ditentukan David. Jika salah satu komponen tidak tersedia, seluruh rakitan ditandai tidak tersedia sampai David menawarkan pengganti.</p>';
       }
       $('#rkMain').innerHTML = h;
       var bar = $('#rkBar'), canNext, label, help = '';
@@ -688,13 +749,13 @@
           else { s.thickness = undefined; if (optVals(p, 'color').indexOf(s.color) < 0) s.color = undefined; }
         }
         if (side !== 'blade' && s.color && !colorAllowed(side, s.color)) { s.color = undefined; toast(FLAG); }
-        main(); var again = $('[data-pick="' + p.sku + '"]'); if (again) again.focus(); return;
+        main(); var again = $('[data-pick="' + esc(p.sku) + '"]'); if (again) again.focus(); return;
       }
       var op = e.target.closest('[data-o]');
       if (op) {
         var sd = rkStep === 1 ? 'blade' : (rkStep === 2 ? 'fh' : 'bh'), k = op.dataset.o, v = op.dataset.v;
         if (k === 'color' && op.getAttribute('aria-disabled') === 'true') { toast('Pilihan itu tidak boleh. ' + FLAG, { err: true }); return; }
-        R[sd][k] = v; main(); var a2 = $('[data-o="' + k + '"][data-v="' + v + '"]'); if (a2) a2.focus(); return;
+        R[sd][k] = v; main(); var a2 = $('[data-o="' + k + '"][data-v="' + esc(v) + '"]'); if (a2) a2.focus(); return;
       }
       var nx = e.target.closest('#rkNext');
       if (nx) {
@@ -724,6 +785,7 @@
       fld('address', 'Alamat lengkap', '<textarea class="input" id="address" autocomplete="street-address"></textarea>') +
       '<div class="form-grid two">' + fld('city', 'Kota', '<input class="input" id="city" autocomplete="address-level2">') + '</div>' +
       fld('note', 'Catatan (opsional)', '<textarea class="input" id="note" placeholder="Mis. warna cadangan bila kosong"></textarea>') +
+      '<div style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden" aria-hidden="true"><label>Jangan diisi <input id="hp" name="website" tabindex="-1" autocomplete="off"></label></div>' +
       '</div></div><div class="panel" style="margin-top:16px"><h2>Pengiriman</h2><p class="hint">Kurir dan ongkir ditentukan David setelah harga final. Barang dikirim dari toko David setelah tiba dari distributor.</p></div>' +
       '<div class="note note--warn" style="margin-top:16px">' + ico('info') + '<span>Tidak ada pembayaran di langkah ini. Anda baru diminta transfer setelah harga final disetujui.</span></div></form>' +
       '<aside class="co__sum"><div class="panel"><h2>Ringkasan</h2>' + lines + '<div class="sumrow total" style="margin-top:8px"><span>Total estimasi</span><span class="num">' + rupiah(cartSubtotal()) + '</span></div>' +
@@ -748,11 +810,37 @@
       if (first) $('#' + first).focus();
       return ok;
     }
+    var clientRef = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10); // dipakai ulang saat "Coba lagi": server tidak menggandakan pesanan
+    function showSendErr(msg, retry) {
+      var old = $('#coErr'); if (old) old.remove();
+      form.insertAdjacentHTML('afterbegin', '<div class="note note--bad" id="coErr" role="alert" style="margin-bottom:16px">' + ico('alert') + '<span>' + esc(msg) + ' Keranjang Anda tidak dikosongkan.' + (retry ? ' <button class="btn btn--secondary btn--sm" type="button" id="coRetry">Coba lagi</button>' : '') + '</span></div>');
+      var rb = $('#coRetry'); if (rb) rb.addEventListener('click', function () { form.dispatchEvent(new Event('submit', { cancelable: true })); });
+    }
+    function sendPublic(btn) {
+      var payload = {
+        name: $('#name').value.trim(), wa: normWa($('#wa').value), address: $('#address').value.trim(), city: $('#city').value.trim(), note: $('#note').value.trim(),
+        hp: ($('#hp') || {}).value || '', client_ref: clientRef,
+        items: cart.map(function (l) {
+          if (l.kind === 'rakitan' && l.components) { var c = l.components; return { kind: 'rakitan', qty: l.qty, components: { blade: { sku: c.blade.sku, handle: c.blade.handle }, fh: { sku: c.fh.sku, thickness: c.fh.thickness, color: c.fh.color }, bh: { sku: c.bh.sku, thickness: c.bh.thickness, color: c.bh.color } } }; }
+          return { kind: 'product', sku: l.sku, variant: l.variant, qty: l.qty };
+        })
+      };
+      DS.pub.createOrder(payload).then(function (res) {
+        if (!form.isConnected) return;
+        if (!res.ok) { btn.disabled = false; btn.style.width = ''; btn.textContent = 'Kirim Pesanan'; showSendErr(res.network ? 'Pesanan BELUM terkirim. ' + res.message : res.message, !!res.network); toast(res.network ? 'Pesanan belum terkirim.' : 'Pesanan ditolak.', { err: true }); return; }
+        $$('.toast--err').forEach(function (t) { t.remove(); }); // buang pesan gagal sebelumnya
+        lastCreated = res.order; rememberLast(res.order, res.track_key);
+        cart = []; saveCart();
+        setTimeout(function () { location.hash = '#/sukses/' + res.id; }, 300); // kode dari SERVER
+      });
+    }
     form.addEventListener('submit', function (e) {
       e.preventDefault();
       if (blockHidden()) { toast('Ada barang yang tidak lagi dijual. Hapus dari keranjang dulu.', { err: true }); return; }
       if (!validate()) return;
-      var btn = $('#coSend'); btn.disabled = true; btn.style.width = btn.offsetWidth + 'px'; btn.textContent = 'Mengirim…';
+      var btn = $('#coSend'); if (btn.disabled) return; btn.disabled = true; btn.style.width = btn.offsetWidth + 'px'; btn.textContent = 'Mengirim…';
+      var oe = $('#coErr'); if (oe) oe.remove();
+      if (pubOn()) { sendPublic(btn); return; }
       var orders = getOrders(), now = new Date(), id = newOrderId(orders), iso = jakartaIso(now);
       var order = {
         id: id, created_at: iso, status: 'placed',
@@ -801,21 +889,37 @@
     }).join('') + '</ol>';
     if (dead) {
       var reason = ((o.history || []).filter(function (x) { return x.status === o.status; }).pop() || {}).note;
-      html += '<div class="note note--bad" style="margin-top:8px">' + ico('xc') + '<span>' + (o.status === 'cancelled' ? 'Pesanan dibatalkan' : 'Batas bayar lewat, pesanan kedaluwarsa') + (reason ? ': ' + esc(reason) : '') + '. <a href="' + waLink(DAVID_WA, 'Halo David, soal pesanan ' + o.id) + '" target="_blank" rel="noopener">Hubungi David via WhatsApp</a></span></div>';
+      html += '<div class="note note--bad" style="margin-top:8px">' + ico('xc') + '<span>' + (o.status === 'cancelled' ? 'Pesanan dibatalkan' : 'Batas bayar lewat, pesanan kedaluwarsa') + (reason ? ': ' + esc(reason) : '') + '. <a href="' + davidLink('Halo David, soal pesanan ' + o.id) + '" target="_blank" rel="noopener">Hubungi David via WhatsApp</a></span></div>';
     }
     return html;
   }
 
   /* ------------------------------------------------------------ SUKSES */
   function viewSuccess(app, r) {
-    var id = r.segs[1], o = getOrders().filter(function (x) { return x.id === id; })[0];
+    var id = r.segs[1];
+    if (pubOn()) {
+      if (lastCreated && lastCreated.id === id) { drawSuccess(app, lastCreated, true); return; }
+      var ref = readLast();
+      if (!ref || ref.id !== id) { viewNotFound(app); return; }
+      app.innerHTML = '<div class="container page"><p class="hint" role="status">Memuat pesanan…</p></div>';
+      DS.pub.track(ref.id, ref.wa, ref.k).then(function (res) {
+        if (!app.isConnected) return;
+        if (res.ok) drawSuccess(app, res.order, true);
+        else app.innerHTML = '<div class="container page"><div class="empty">' + ico('info') + '<p>Pesanan <b>' + esc(id) + '</b> sudah dibuat. ' + esc(res.network ? res.message : 'Rinciannya belum bisa dimuat.') + '</p><a class="btn" href="' + trackLink(id, ref.wa, ref.k) + '">Lacak Pesanan</a></div></div>';
+      });
+      return;
+    }
+    var o = getOrders().filter(function (x) { return x.id === id; })[0];
     if (!o) { viewNotFound(app); return; }
+    drawSuccess(app, o, false);
+  }
+  function drawSuccess(app, o, server) {
     app.innerHTML = '<div class="container page"><div class="center-col"><div class="ok-badge">' + ico('check') + '</div><h1 class="page__title">Pesanan terkirim</h1>' +
       '<div><div class="eyebrow">Nomor pesanan</div><div class="ordno">' + esc(o.id) + ' <button class="btn btn--secondary btn--sm" type="button" data-copy="' + esc(o.id) + '">' + ico('copy') + 'Salin</button></div></div>' +
       '<p>Pesanan ' + esc(o.id) + ' sudah kami terima. Kami cek ketersediaannya ke distributor dulu. Kabar selanjutnya dan harga final kami kirim lewat WhatsApp ke ' + esc(o.customer.wa) + '. Belum ada pembayaran yang perlu dilakukan.</p>' +
       '<div class="panel" style="width:100%">' + stepperHtml(o) + '</div>' +
-      '<div style="display:flex;gap:12px;flex-wrap:wrap"><a class="btn" href="#/lacak?id=' + encodeURIComponent(o.id) + '&wa=' + encodeURIComponent(o.customer.wa) + '">Lacak Pesanan ' + ico('right', 'ico arrow') + '</a><a class="btn btn--secondary" href="#/">Kembali belanja</a></div>' +
-      '<p class="hint">Simpan nomor pesanan dan nomor WhatsApp Anda untuk melacak pesanan.</p></div></div>';
+      '<div style="display:flex;gap:12px;flex-wrap:wrap"><a class="btn" href="' + (server && readLast() && readLast().id === o.id ? trackLink(o.id, o.customer.wa, readLast().k) : '#/lacak?id=' + encodeURIComponent(o.id) + '&wa=' + encodeURIComponent(o.customer.wa)) + '">Lacak Pesanan ' + ico('right', 'ico arrow') + '</a><a class="btn btn--secondary" href="#/">Kembali belanja</a></div>' +
+      '<p class="hint">' + (server ? SAVED_BADGE + '<br>' : '') + 'Simpan nomor pesanan dan nomor WhatsApp Anda untuk melacak pesanan.</p></div></div>';
   }
 
   /* ------------------------------------------------------------ LACAK PESANAN */
@@ -834,13 +938,59 @@
     return { est: est, fin: fin, ship: o.shipping_fee || 0, total: fin + (o.shipping_fee || 0) };
   }
   function viewTrack(app, r) {
-    var qid = r.q.get('id') || '', qwa = r.q.get('wa') || '';
-    var cur = null;
+    var qid = r.q.get('id') || '', qwa = r.q.get('wa') || '', qk = r.q.get('k') || '';
+    var cur = null, pub = pubOn();
+    var NOKEY = 'Untuk keamanan, buka tautan Lacak dari WhatsApp atau dari halaman sukses pesanan. Pesanan tidak bisa dibuka hanya dengan nomor pesanan dan WhatsApp.';
+    var NF = 'Pesanan tidak ditemukan. Periksa nomor pesanan dan nomor WhatsApp yang Anda pakai saat memesan.';
     app.innerHTML = '<div class="container page"><h1 class="page__title" style="margin-bottom:16px">Lacak Pesanan</h1><div class="trk" id="trk"></div></div>';
+    // pencarian: server (mode publik) atau penyimpanan lokal. -> Promise<{ok, order|message, network}>
+    function lookup(id, wa) {
+      if (pub) return qk ? DS.pub.track(String(id).trim(), wa, qk) : Promise.resolve({ ok: false, message: NOKEY });
+      var o = find(id, wa); return Promise.resolve(o ? { ok: true, order: o } : { ok: false, message: NF });
+    }
+    // aksi customer (mode publik: divalidasi server). okMsg = toast bila berhasil
+    function act(action, extra, okMsg) {
+      return DS.pub.action(cur.id, cur.customer.wa, qk, action, extra).then(function (res) {
+        if (!res.ok) { toast(res.message || 'Aksi gagal.', { err: true }); return; }
+        cur = res.order; showResult(); if (okMsg) toast(okMsg);
+        return true;
+      });
+    }
+    /* ---- unggah bukti (mode publik): foto dikecilkan dulu (sisi terpanjang 1600px, JPEG ~0.8), PDF apa adanya ---- */
+    function fileToB64(blob) {
+      return new Promise(function (res, rej) { var rd = new FileReader(); rd.onload = function () { res(String(rd.result).split(',')[1] || ''); }; rd.onerror = function () { rej(new Error('Berkas tidak bisa dibaca')); }; rd.readAsDataURL(blob); });
+    }
+    function shrinkImage(file) { // -> Promise<Blob JPEG <= ~900 KB>
+      return new Promise(function (res, rej) {
+        var url = URL.createObjectURL(file), img = new Image();
+        img.onerror = function () { URL.revokeObjectURL(url); rej(new Error('Foto tidak bisa dibuka. Coba foto lain atau PDF.')); };
+        img.onload = function () {
+          URL.revokeObjectURL(url);
+          var scale = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight)), q = 0.8, tries = 0;
+          (function pass() {
+            var c = document.createElement('canvas'); c.width = Math.max(1, Math.round(img.naturalWidth * scale)); c.height = Math.max(1, Math.round(img.naturalHeight * scale));
+            var g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+            c.toBlob(function (b) {
+              if (!b) { rej(new Error('Foto gagal dikecilkan')); return; }
+              if (b.size > 900 * 1024 && tries < 6) { tries++; if (q > 0.5) q -= 0.15; else scale *= 0.75; pass(); return; }
+              res(b);
+            }, 'image/jpeg', q);
+          })();
+        };
+        img.src = url;
+      });
+    }
     function find(id, wa) {
       return getOrders().filter(function (o) { return o.id.toUpperCase() === String(id).trim().toUpperCase() && normWa(o.customer && o.customer.wa) === normWa(wa); })[0];
     }
+    function linkFormHtml(err) {
+      return '<form class="panel" id="tf" novalidate style="max-width:520px"><div class="form-grid"><p>Buka tautan Lacak yang dikirim David lewat WhatsApp atau yang tampil di halaman sukses pesanan. Atau tempel tautannya di sini.</p>' +
+        '<div class="field"><label for="tlink">Tautan Lacak</label><input class="input" id="tlink" placeholder="https://…/marketplace/#/lacak?id=…&amp;k=…" autocomplete="off"></div>' +
+        (err ? '<div class="err" role="alert">' + ico('alert') + '<span>' + esc(err) + '</span></div>' : '') +
+        '<button class="btn" type="submit">Buka Pesanan ' + ico('right', 'ico arrow') + '</button></div></form>';
+    }
     function formHtml(err) {
+      if (pub) return linkFormHtml(err);
       return '<form class="panel" id="tf" novalidate style="max-width:520px"><div class="form-grid"><div class="field"><label for="tid">Nomor pesanan</label><input class="input mono" id="tid" placeholder="DS-20261108-0001" autocomplete="off" value="' + esc(qid) + '"></div>' +
         '<div class="field"><label for="twa">Nomor WhatsApp saat memesan</label><input class="input" id="twa" type="tel" inputmode="tel" placeholder="0812 3456 7890" value="' + esc(qwa) + '"></div>' +
         (err ? '<div class="err" role="alert">' + ico('alert') + '<span>' + esc(err) + '</span></div>' : '') +
@@ -848,11 +998,22 @@
     }
     function showForm(err) {
       var t = $('#trk'); t.className = 'trk'; t.innerHTML = formHtml(err);
+      if (pub) {
+        $('#tf').addEventListener('submit', function (e) {
+          e.preventDefault();
+          var v = $('#tlink').value, i = v.indexOf('#/lacak?'), q = new URLSearchParams(i >= 0 ? v.slice(i + 8) : '');
+          if (!q.get('id') || !q.get('k')) { showForm(NOKEY); return; }
+          location.hash = '#/lacak?' + q.toString();
+        });
+        return;
+      }
       $('#tf').addEventListener('submit', function (e) {
         e.preventDefault(); qid = $('#tid').value; qwa = $('#twa').value;
-        var o = find(qid, qwa);
-        if (!o) { showForm('Pesanan tidak ditemukan. Periksa nomor pesanan dan nomor WhatsApp yang Anda pakai saat memesan.'); $('#tid').focus(); return; }
-        cur = o; showResult();
+        var sb = $('#tf button[type="submit"]'); sb.disabled = true;
+        lookup(qid, qwa).then(function (res) {
+          if (!res.ok) { showForm(res.message || NF); $('#tid').focus(); return; }
+          cur = res.order; showResult();
+        });
       });
     }
     function liHtml(o, it, quoted) {
@@ -861,7 +1022,7 @@
       var diff = changed ? it.final_price - it.est_price : 0;
       var priceCell = it.item_status === 'unavailable' ? '<span class="hint">tidak ditagih</span>' : (changed ? '<s>' + rupiah(it.est_price * it.qty) + ' (estimasi)</s>' + rupiah(unit * it.qty) + ' <span class="' + (diff > 0 ? 'diff-up' : 'diff-down') + '">' + (diff > 0 ? '+' : '−') + rupiah(Math.abs(diff)).replace(/ /g, ' ') + '/unit</span>' : rupiah(it.est_price * it.qty) + '<br><span class="hint" style="font-size:12px">estimasi</span>');
       var acts = '';
-      if (it.item_status === 'unavailable') acts = '<div class="note note--bad" style="width:100%">' + ico('xc') + '<span>Maaf, barang ini tidak tersedia di distributor. Barang ini tidak ditagih. <a href="' + waLink(DAVID_WA, 'Halo David, soal pesanan ' + o.id + ': ' + it.name) + '" target="_blank" rel="noopener">Tanya David</a></span></div>';
+      if (it.item_status === 'unavailable') acts = '<div class="note note--bad" style="width:100%">' + ico('xc') + '<span>Maaf, barang ini tidak tersedia di distributor. Barang ini tidak ditagih. <a href="' + davidLink('Halo David, soal pesanan ' + o.id + ': ' + it.name) + '" target="_blank" rel="noopener">Tanya David</a></span></div>';
       if (it.item_status === 'alternative_offered') {
         var alt = it.alternative; acts = '<div class="note note--warn" style="width:100%">' + ico('info') + '<span>David menawarkan pengganti' + (alt ? ': <b>' + esc(alt.name || '') + '</b>' + (alt.variant ? ' · ' + esc(alt.variant) : '') + (typeof alt.price === 'number' ? ' · ' + rupiah(alt.price) : '') : '. Rincian pengganti dikirim lewat WhatsApp') + '.</span></div>' +
           (o.status === 'quoted' ? '<button class="btn btn--sm" type="button" data-dec="accepted" data-l="' + esc(it.line_id) + '">Terima pengganti</button><button class="btn btn--secondary btn--sm" type="button" data-dec="declined" data-l="' + esc(it.line_id) + '">Tolak</button>' : '');
@@ -872,33 +1033,39 @@
     }
     function quoteCard(o) {
       var t = orderTotals(o), diff = t.fin - t.est, pay = o.payment || { status: 'none' }, deadline = o.pay_deadline;
-      var bk = (window.DS && DS.getSettings && DS.getSettings().bank) || { bank: '[?]', name: '[?]', no: '[?]' }; // satu sumber dengan teks WA dashboard
+      var bk = o.bank || (window.DS && DS.getSettings && DS.getSettings().bank) || { bank: '[?]', name: '[?]', no: '[?]' }; // mode publik: dari server (tab settings)
       var h = '<div class="qcard"><h3>Harga final siap</h3>';
       h += '<div class="sumrow"><span>Barang (estimasi awal ' + rupiah(t.est).replace(/ /g, ' ') + ')</span><span class="num">' + rupiah(t.fin) + '</span></div>';
       if (diff) h += '<div class="sumrow hint"><span>Selisih dari estimasi</span><span class="' + (diff > 0 ? 'diff-up' : 'diff-down') + '">' + (diff > 0 ? '+' : '−') + rupiah(Math.abs(diff)).replace(/ /g, ' ') + '</span></div>';
       h += '<div class="sumrow"><span>Ongkir</span><span class="num">' + (o.shipping_fee != null ? rupiah(o.shipping_fee) : '<span class="hint">belum diisi</span>') + '</span></div><div class="sumrow total"><span>Total bayar</span><span class="num">' + rupiah(t.total) + '</span></div>';
       if (deadline) h += '<div class="note note--warn">' + ico('clock') + '<span>Bayar sebelum <b>' + fmtDate(deadline) + ' · ' + fmtTime(deadline) + '</b>. Lewat batas, pesanan kedaluwarsa.</span></div>';
-      h += '<div><div class="eyebrow" style="margin-bottom:6px">Transfer ke <span data-sample>(rekening contoh)</span></div><div class="copyrow"><span>' + esc(bk.bank) + ' · a.n. ' + esc(bk.name) + '<br><span class="mono">' + esc(bk.no) + '</span></span><button class="btn btn--secondary btn--sm" type="button" data-copy="' + esc(bk.no) + '">' + ico('copy') + 'Salin Nomor Rekening</button></div>' +
+      h += '<div><div class="eyebrow" style="margin-bottom:6px">Transfer ke</div><div class="copyrow"><span>' + esc(bk.bank || '[?]') + ' · a.n. ' + esc(bk.name || '[?]') + '<br><span class="mono">' + esc(bk.no || '[?]') + '</span></span><button class="btn btn--secondary btn--sm" type="button" data-copy="' + esc(bk.no || '') + '">' + ico('copy') + 'Salin Nomor Rekening</button></div>' +
         '<div class="copyrow" style="margin-top:8px"><span>Nominal persis<br><span class="mono">' + t.total + '</span></span><button class="btn btn--secondary btn--sm" type="button" data-copy="' + t.total + '">' + ico('copy') + 'Salin</button></div></div>';
       if (pay.status === 'pending_verification') h += '<div class="note note--ok">' + ico('check') + '<span>Bukti transfer diterima (<span class="mono">' + esc(pay.proof_name || '') + '</span>). Menunggu verifikasi David.</span></div>';
       if (pay.status === 'rejected') h += '<div class="note note--bad">' + ico('alert') + '<span>Bukti transfer ditolak' + (pay.reject_reason ? ': ' + esc(pay.reject_reason) : '') + '. Silakan unggah ulang.</span></div>';
-      h += '<input type="file" id="proof" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf" hidden><div class="field"><label for="proofAmt">Nominal yang ditransfer (Rp)</label><input class="input" id="proofAmt" type="text" inputmode="numeric" autocomplete="off" value="' + t.total + '"></div><button class="btn" type="button" id="btnProof">' + ico('upload') + (pay.status === 'pending_verification' ? 'Ganti Bukti Transfer' : 'Unggah Bukti Transfer') + '</button><div class="err" id="proofErr" hidden></div>' +
-        '<a class="btn btn--secondary" target="_blank" rel="noopener" href="' + waLink(DAVID_WA, 'Halo David, saya tanya soal pesanan ' + o.id) + '">' + ico('wa') + 'Tanya via WhatsApp</a>';
+      h += '<input type="file" id="proof" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf" hidden><div class="field"><label for="proofAmt">Nominal yang ditransfer (Rp)</label><input class="input" id="proofAmt" type="text" inputmode="numeric" autocomplete="off" value="' + t.total + '"></div><button class="btn" type="button" id="btnProof">' + ico('upload') + (pay.status === 'pending_verification' ? 'Ganti Bukti Transfer' : 'Unggah Bukti Transfer') + '</button><div id="proofPrev" hidden></div><div class="err" id="proofErr" hidden></div>' + (pub ? '<p class="hint">Foto dikecilkan otomatis sebelum dikirim. Format JPG, PNG, atau PDF (maks. 5 MB).</p>' : '') +
+        '<a class="btn btn--secondary" target="_blank" rel="noopener" href="' + davidLink('Halo David, saya tanya soal pesanan ' + o.id) + '">' + ico('wa') + 'Tanya via WhatsApp</a>';
       return h + '</div>';
     }
     function showResult() {
       var o = cur, t = $('#trk'); t.className = 'trk trk--res';
       var statusLabel = ({ cancelled: 'Dibatalkan', expired: 'Batas bayar lewat' }[o.status]) || (STEPS.filter(function (s) { return s[0] === o.status; })[0] || [0, o.status])[1];
       var canCancel = ['placed', 'sourcing', 'quoted'].indexOf(o.status) >= 0 && (!o.payment || o.payment.status !== 'pending_verification');
-      t.innerHTML = '<div><div class="panel"><div class="eyebrow">Pesanan</div><div class="ordno" style="font-size:20px">' + esc(o.id) + '</div><div style="margin:10px 0 4px"><span class="badge badge--lg badge--' + (BADGE[o.status] || 'neutral') + '">' + esc(statusLabel) + '</span></div><div class="hint">Dibuat ' + fmtDate(o.created_at) + ' · ' + fmtTime(o.created_at) + '</div></div>' +
+      t.innerHTML = '<div><div class="panel"><div class="eyebrow">Pesanan</div><div class="ordno" style="font-size:20px">' + esc(o.id) + '</div><div style="margin:10px 0 4px"><span class="badge badge--lg badge--' + (BADGE[o.status] || 'neutral') + '">' + esc(statusLabel) + '</span></div><div class="hint">Dibuat ' + fmtDate(o.created_at) + ' · ' + fmtTime(o.created_at) + '</div>' + (pub ? '<div style="margin-top:8px">' + SAVED_BADGE + '</div>' : '') + '</div>' +
         '<div class="panel" style="margin-top:16px">' + stepperHtml(o) + '</div></div>' +
         '<div style="display:grid;gap:16px;align-content:start">' + (o.status === 'quoted' ? quoteCard(o) : '') +
         '<div class="panel"><h2>Barang</h2>' + o.items.map(function (it) { return liHtml(o, it); }).join('') + '<p class="hint" style="margin-top:12px">' + (o.status === 'placed' || o.status === 'sourcing' ? 'Harga adalah estimasi. Harga final dikonfirmasi setelah cek ketersediaan ke distributor.' : '') + '</p></div>' +
-        '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn--secondary btn--sm" type="button" id="btnOther">Lacak pesanan lain</button>' + (canCancel ? '<button class="btn btn--danger btn--sm" type="button" id="btnCancel">Batalkan pesanan</button>' : '') + '</div></div>';
+        '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn--secondary btn--sm" type="button" id="btnOther">Lacak pesanan lain</button>' + (pub ? '<button class="btn btn--secondary btn--sm" type="button" id="btnRefresh">Perbarui status</button>' : '') + (canCancel ? '<button class="btn btn--danger btn--sm" type="button" id="btnCancel">Batalkan pesanan</button>' : '') + '</div></div>';
       $('#btnOther').addEventListener('click', function () { qid = ''; qwa = ''; cur = null; showForm(); });
+      var br = $('#btnRefresh'); if (br) br.addEventListener('click', function () {
+        br.disabled = true;
+        lookup(cur.id, cur.customer.wa).then(function (res) { if (res.ok) { cur = res.order; showResult(); toast('Status diperbarui.'); } else { br.disabled = false; toast(res.message || 'Gagal memperbarui.', { err: true }); } });
+      });
       var bc = $('#btnCancel'); if (bc) bc.addEventListener('click', function () {
         confirmBox('Batalkan pesanan ' + o.id + '?', 'Pesanan belum dibayar, jadi tidak ada uang yang perlu dikembalikan. Tindakan ini tidak bisa diurungkan.', 'Batalkan Pesanan', true).then(function (ok) {
-          if (!ok) return; update(function (x) { x.status = 'cancelled'; x.history.push({ at: jakartaIso(new Date()), status: 'cancelled', by: 'customer', note: 'Dibatalkan oleh customer' }); }); toast('Pesanan dibatalkan.');
+          if (!ok) return;
+          if (pub) { act('cancel', {}, 'Pesanan dibatalkan.'); return; }
+          update(function (x) { x.status = 'cancelled'; x.history.push({ at: jakartaIso(new Date()), status: 'cancelled', by: 'customer', note: 'Dibatalkan oleh customer' }); }); toast('Pesanan dibatalkan.');
         });
       });
       var bp = $('#btnProof'); if (bp) {
@@ -909,11 +1076,31 @@
         });
         fi.addEventListener('change', function () {
           var f = fi.files[0], er = $('#proofErr'); if (!f) return;
-          var okType = /\.(jpe?g|png|pdf)$/i.test(f.name), okSize = f.size <= 5 * 1024 * 1024;
-          if (!okType || !okSize) { er.hidden = false; er.innerHTML = ico('alert') + '<span>' + (!okType ? 'Format harus jpg, png, atau pdf.' : 'Ukuran maksimal 5 MB.') + '</span>'; fi.value = ''; return; }
+          var okType = /\.(jpe?g|png|pdf)$/i.test(f.name), isPdf = /\.pdf$/i.test(f.name), okSize = f.size <= (pub && !isPdf ? 25 : 5) * 1024 * 1024;
+          if (!okType || !okSize) { er.hidden = false; er.innerHTML = ico('alert') + '<span>' + (!okType ? 'Format harus jpg, png, atau pdf.' : (pub && !isPdf ? 'Foto terlalu besar (maks. 25 MB).' : 'Ukuran PDF maksimal 5 MB.')) + '</span>'; fi.value = ''; return; }
           var amt = parseInt(String(amtEl.value).replace(/\D/g, ''), 10);
           if (!amt || amt <= 0) { er.hidden = false; er.innerHTML = ico('alert') + '<span>Isi nominal yang ditransfer (lebih dari 0).</span>'; fi.value = ''; return; }
           er.hidden = true;
+          if (pub) {
+            var prev = $('#proofPrev'); prev.hidden = false; prev.innerHTML = '<p class="hint" role="status">Menyiapkan berkas…</p>';
+            (isPdf ? Promise.resolve(f) : shrinkImage(f)).then(function (blob) {
+              return fileToB64(blob).then(function (b64) { return { blob: blob, b64: b64 }; });
+            }).then(function (p) {
+              var kb = Math.round(p.blob.size / 1024), url = isPdf ? null : URL.createObjectURL(p.blob);
+              prev.innerHTML = '<div class="proofprev">' + (isPdf ? '<div class="proofprev__pdf">' + ico('copy') + 'PDF</div>' : '<img src="' + url + '" alt="Pratinjau bukti transfer">') + '<div><b>' + esc(f.name) + '</b><div class="hint">' + kb + ' KB' + (isPdf ? '' : ' (sudah dikecilkan)') + ' · nominal Rp ' + num(amt) + '</div>' +
+                '<div style="display:flex;gap:8px;margin-top:8px"><button class="btn" type="button" id="proofSend">Kirim bukti</button><button class="btn btn--secondary" type="button" id="proofCancel">Batal</button></div></div></div>';
+              $('#proofCancel').addEventListener('click', function () { prev.hidden = true; prev.innerHTML = ''; fi.value = ''; if (url) URL.revokeObjectURL(url); });
+              $('#proofSend').addEventListener('click', function () {
+                var sb = $('#proofSend'); sb.disabled = true; $('#proofCancel').disabled = true; sb.textContent = 'Mengunggah… ' + kb + ' KB'; er.hidden = true;
+                act('payment_proof', { proof_name: f.name, amount: amt, file_b64: p.b64 }, 'Bukti transfer terunggah. Menunggu verifikasi David.').then(function (okk) {
+                  if (okk) return;
+                  sb.disabled = false; $('#proofCancel').disabled = false; sb.textContent = 'Coba kirim lagi';
+                  er.hidden = false; er.innerHTML = ico('alert') + '<span>Bukti BELUM terunggah (lihat pesan merah). Coba lagi, atau kirim fotonya lewat WhatsApp ke David.</span>';
+                });
+              });
+            }, function (e2) { prev.innerHTML = ''; prev.hidden = true; er.hidden = false; er.innerHTML = ico('alert') + '<span>' + esc(e2 && e2.message || 'Berkas gagal diproses') + '</span>'; fi.value = ''; });
+            return;
+          }
           update(function (x) { x.payment = { status: 'pending_verification', proof_name: f.name, amount: amt }; }); toast('Bukti transfer diterima. Menunggu verifikasi David.');
         });
       }
@@ -924,6 +1111,7 @@
     }
     $('#trk').addEventListener('click', function (e) {
       var d = e.target.closest('[data-dec]'); if (!d || !cur) return;
+      if (pub) { act('item_decision', { line_id: d.dataset.l, decision: d.dataset.dec }, 'Total dihitung ulang.'); return; }
       update(function (x) { x.items.forEach(function (it) { if (it.line_id === d.dataset.l) it.item_status = d.dataset.dec; }); });
       toast('Total dihitung ulang.');
     });
@@ -932,7 +1120,11 @@
     window.addEventListener('storage', onStorage);
     cleanup = function () { window.removeEventListener('storage', onStorage); };
 
-    if (qid && qwa) { var o = find(qid, qwa); if (o) { cur = o; showResult(); return; } showForm(qid && qwa ? 'Pesanan tidak ditemukan. Periksa nomor pesanan dan nomor WhatsApp yang Anda pakai saat memesan.' : ''); return; }
+    if (qid && qwa) {
+      $('#trk').innerHTML = '<p class="hint" role="status">Memuat pesanan…</p>';
+      lookup(qid, qwa).then(function (res) { if (!app.isConnected) return; if (res.ok) { cur = res.order; showResult(); } else showForm(res.message || NF); });
+      return;
+    }
     showForm();
   }
 
@@ -941,7 +1133,7 @@
   function rerender() {
     if (!started) return;
     var v = parseHash().segs[0] || '';
-    drawSyncBadge();
+    drawSyncBadge(); drawShellLists();
     if (openEl && openEl.id === 'cartDrawer') renderCart();
     if (v === 'checkout') { if (window.__dsCoBlock) window.__dsCoBlock(); return; } // jangan buang isian formulir
     if (v === 'rakit' || v === 'lacak' || v === 'sukses') return; // jangan buang isian pengguna
@@ -950,6 +1142,7 @@
   function start() {
     if (started) return; started = true;
     renderShell();
+    try { new MutationObserver(function () { hideNoWa(document); }).observe(document.body, { childList: true, subtree: true }); } catch (e) { } // tautan WA tanpa nomor selalu disembunyikan
     window.addEventListener('hashchange', route);
     route();
     window.addEventListener('storage', function (e) { if (!e.key || e.key === 'ds_brands_v1') rerender(); });

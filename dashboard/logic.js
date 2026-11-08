@@ -233,7 +233,7 @@
       var pi = po.items.filter(function (x) { return unitKey(x) === r.key && !x.superseded; })[0];
       if (!pi) return fail('Item tidak ada di PO.');
       var cost = r.available ? Math.round(Number(r.cost)) : null;
-      if (r.available && !(cost > 0)) return fail('Isi harga modal (angka > 0) untuk ' + pi.name + '.');
+      if (r.available && !(cost > 0)) return fail('Isi Harga Distributor (angka > 0) untuk ' + pi.name + '.');
       pi.available = !!r.available; pi.cost_price = cost; pi.eta = r.available ? (r.eta || null) : null; pi.note = r.note || '';
       po.responses.push({ at: at, line_id: pi.line_id, component: pi.component, available: pi.available, cost_price: cost, eta: pi.eta, note: pi.note });
       n++;
@@ -303,7 +303,7 @@
       var price = Math.round(Number(ln.final_price));
       if (!(price > 0)) return fail('Isi harga jual untuk ' + it.name + '.');
       var c = costOf(d.pos, o, it, ln.pick);
-      if (c.missing) return fail('Modal ' + it.name + ' belum ada dari balasan distributor.');
+      if (c.missing) return fail('Harga Distributor ' + it.name + ' belum ada dari balasan distributor.');
       res.push({ it: it, ln: ln, price: price, c: c });
     }
     var warnRugi = [];
@@ -367,12 +367,50 @@
     o.payment = Object.assign({}, o.payment, { status: 'verified', verified_at: nowIso() });
     o.items.forEach(function (it) { if (it.item_status === 'available' || it.item_status === 'alternative_offered') it.item_status = 'accepted'; });
     o.status = 'paid';
-    posOf(d, o.id).forEach(function (p) {
-      if (['draft', 'sent', 'responded', 'rejected'].indexOf(p.status) >= 0 && !p.items.some(function (pi) { return pi.chosen; })) p.status = 'cancelled';
+    // Batalkan HANYA PO yang jelas kalah: tidak ada item terpilih DAN tiap barisnya sudah dipegang PO lain (item terpilih di sana).
+    // Bila data tidak konsisten (baris ditagih tanpa item terpilih di PO mana pun), JANGAN membatalkan apa pun; catat peringatan.
+    var live = posOf(d, o.id), orphan = [];
+    function held(lineId, except) { return live.some(function (q) { return q !== except && q.status !== 'cancelled' && q.items.some(function (x) { return x.line_id === lineId && x.chosen; }); }); }
+    o.items.filter(isBillable).forEach(function (it) { if (!held(it.line_id, null)) orphan.push(it.name); });
+    live.forEach(function (p) {
+      if (['draft', 'sent', 'responded', 'rejected'].indexOf(p.status) < 0 || p.items.some(function (pi) { return pi.chosen; })) return;
+      var lost = p.items.filter(function (pi) { return !pi.superseded; }).every(function (pi) { return held(pi.line_id, p); });
+      if (lost) p.status = 'cancelled';
     });
+    if (orphan.length) addHist(o, 'PERINGATAN: data PO tidak konsisten (tidak ada item PO terpilih untuk: ' + orphan.join(', ') + '). PO tidak dibatalkan otomatis; cek PO di bawah.');
     var t = totals(o), warn = o.payment.amount != null && o.payment.amount !== t.total;
     addHist(o, 'Bukti transfer diterima' + (warn ? ' (nominal klaim ' + DS.formatRupiah(o.payment.amount) + ' ≠ total ' + DS.formatRupiah(t.total) + ')' : ''));
     save(d); return { ok: true, mismatch: warn };
+  };
+
+  // Keadaan tidak konsisten: pesanan sudah Lunas/Diproses tapi ada baris ditagih tanpa item PO terpilih (mis. PO terbatal otomatis).
+  function inconsistency(order, pos) {
+    if (['paid', 'fulfilling'].indexOf(order.status) < 0) return null;
+    var mine = pos.filter(function (p) { return p.order_id === order.id; });
+    var lines = order.items.filter(isBillable).filter(function (it) { return !mine.some(function (p) { return p.status !== 'cancelled' && p.items.some(function (x) { return x.line_id === it.line_id && x.chosen; }); }); });
+    if (!lines.length) return null;
+    return { lines: lines.map(function (i) { return i.name; }), cancelled: mine.filter(function (p) { return p.status === 'cancelled'; }).map(function (p) { return p.id; }) };
+  }
+  // Pulihkan PO terbatal otomatis: kembali ke 'responded'; item terpilih dipulihkan dari Harga Distributor yang tercatat di cost_price item pesanan.
+  A.restorePo = function (poId) {
+    var d = load(), po = findPo(d, poId);
+    if (!po) return fail('PO tidak ditemukan.');
+    var o = findOrder(d, po.order_id);
+    if (po.status !== 'cancelled') return fail('Hanya PO berstatus Dibatalkan yang bisa dipulihkan.');
+    if (['paid', 'fulfilling'].indexOf(o.status) < 0) return fail('Pemulihan hanya untuk pesanan Lunas atau Diproses.');
+    var n = 0, skipped = [];
+    o.items.filter(isBillable).forEach(function (it) {
+      var mineItems = po.items.filter(function (x) { return x.line_id === it.line_id && !x.superseded && x.available === true && x.cost_price != null; });
+      if (!mineItems.length) return;
+      var sum = mineItems.reduce(function (s, x) { return s + x.cost_price; }, 0);
+      var expect = it.kind === 'rakitan' ? sum : mineItems[0].cost_price;
+      if (it.cost_price == null || expect !== it.cost_price) { skipped.push(it.name); return; }
+      mineItems.forEach(function (x) { x.chosen = true; n++; });
+    });
+    if (!n) return fail('Tidak ada item yang bisa dipulihkan: Harga Distributor di PO tidak cocok dengan yang tercatat di pesanan' + (skipped.length ? ' (' + skipped.join(', ') + ')' : '') + '.');
+    po.status = 'responded';
+    addHist(o, po.id + ' dipulihkan dari Dibatalkan (batal otomatis saat Terima bayar). Item terpilih dipulihkan: ' + n + (skipped.length ? '; dilewati karena harga tidak cocok: ' + skipped.join(', ') : '') + '.');
+    save(d); return { ok: true, restored: n };
   };
 
   A.confirmPo = function (poId) {
@@ -495,7 +533,7 @@
     po.items.filter(function (x) { return !x.superseded; }).forEach(function (pi, i) {
       lines.push((i + 1) + '. ' + pi.name + (pi.variant ? ' — ' + pi.variant : '') + ' × ' + pi.qty);
     });
-    lines.push('', 'Alamat kirim: ' + s.address, '', 'Mohon balas per item: ada/tidak, harga per unit, dan estimasi tiba. Terima kasih.');
+    lines.push('', 'Alamat kirim: ' + (s.address || '[?] alamat belum diisi di Pengaturan'), '', 'Mohon balas per item: ada/tidak, harga per unit, dan estimasi tiba. Terima kasih.');
     return lines.join('\n');
   }
   function poConfirmText(po, order) {
@@ -511,7 +549,7 @@
   function statusLink(order) {
     var base = 'https://davidstore.example/marketplace/index.html';
     try { if (typeof location !== 'undefined' && /^https?:$/.test(location.protocol)) base = new URL('../marketplace/index.html', location.href).href; } catch (e) {}
-    return base + '#/lacak?id=' + encodeURIComponent(order.id) + '&wa=' + encodeURIComponent((order.customer && order.customer.wa) || '');
+    return base + '#/lacak?id=' + encodeURIComponent(order.id) + '&wa=' + encodeURIComponent((order.customer && order.customer.wa) || '') + (order.track_key ? '&k=' + encodeURIComponent(order.track_key) : '');
   }
   function quoteText(order) {
     var t = totals(order), s = DS.getSettings();
@@ -720,6 +758,7 @@
           if (p.profit == null) x.incomplete = true; else x.profit += p.profit;
         });
         a.qty += p.qty; b.qty += p.qty;
+        d.ords = d.ords || {}; d.ords[l.orderId] = true; // pesanan yang menyumbang ke baris ini (untuk tautan 'lihat n pesanan')
         if (p.modal != null) d.modal += p.modal;
       });
     });
@@ -868,7 +907,7 @@
     A: A, unitsOf: unitsOf, entriesFor: entriesFor, unitState: unitState, eligibleUnits: eligibleUnits, itemPoState: itemPoState,
     categoryOf: categoryOf, assemblyFee: assemblyFee, priceFrom: priceFrom, marginFrom: marginFrom, roundUp1000: roundUp1000,
     costOf: costOf, offersOf: offersOf, totals: totals, quoteReady: quoteReady, isBillable: isBillable,
-    waLink: waLink, poText: poText, poConfirmText: poConfirmText, quoteText: quoteText, shipText: shipText, statusLink: statusLink,
+    inconsistency: inconsistency, waLink: waLink, poText: poText, poConfirmText: poConfirmText, quoteText: quoteText, shipText: shipText, statusLink: statusLink,
     actionFor: actionFor, unitKey: unitKey, ms: ms, dist: dist, load: load
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = root.DSLogic;

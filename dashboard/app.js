@@ -140,7 +140,7 @@
   // ---------- state ----------
   var wiz = null;   // {orderId, step, sel:{key:distId}}
   var quote = null; // {orderId, lines:{line_id:{...}}, shipping, hours}
-  var ordersFilter = 'semua', ordersQuery = '', catQuery = '';
+  var ordersFilter = 'semua', ordersQuery = '', catQuery = '', ordersIds = null; // ordersIds: daftar id terpilih dari tautan Beranda
 
   // ---------- routing ----------
   function route() { var h = (location.hash || '#/beranda').replace(/^#\/?/, ''); return h.split('/').map(decodeURIComponent); }
@@ -160,7 +160,7 @@
       NAV.map(function (n) {
         var k = c[n[0] === 'pesanan' ? 'orders' : n[0] === 'po' ? 'po' : ''];
         return '<a href="#/' + n[0] + '"' + (n[0] === sec ? ' aria-current="page"' : '') + '>' + ic(n[2]) + '<span>' + n[1] + '</span>' + (k ? '<span class="cnt" aria-label="' + k + ' perlu tindakan">' + k + '</span>' : '') + '</a>';
-      }).join('') + '</div><div class="foot"><p>Data demo disimpan di browser ini saja.</p><button class="btn sec sm" data-act="reset-demo">Reset data demo</button></div>';
+      }).join('') + '</div><div class="foot">' + (DS.syncStatus && DS.syncStatus().mode === 'sheet' ? '<p>Data tersimpan di Google Sheet.</p>' : '<p>Pesanan dan PO tersimpan di browser ini saja.</p><button class="btn sec sm" data-act="clear-local">Hapus data lokal browser ini</button>') + '</div>';
   }
 
   function render() {
@@ -179,13 +179,14 @@
       else html = '<h1>Halaman tidak ada</h1><p><a href="#/beranda">Kembali ke Beranda</a></p>';
     } catch (e) {
       console.error(e);
-      html = '<div class="note bad">' + ic('alert') + '<div><b>Data belum bisa ditampilkan.</b> Coba muat ulang atau tekan Reset data demo. Kode: ' + esc(e && e.message) + '</div></div>';
+      html = '<div class="note bad">' + ic('alert') + '<div><b>Data belum bisa ditampilkan.</b> Coba muat ulang halaman. Kode: ' + esc(e && e.message) + '</div></div>';
     }
     var m = $('#main'); m.innerHTML = '<div class="fade">' + html + '</div>';
     renderSide(sec);
     document.title = 'Dashboard David — DavidStore';
     if (sec === 'pesanan' && r[2] === 'harga') bindQuote();
     if (sec === 'pengaturan') mountSync();
+    hydrateProofs();
   }
 
   function pageHead(title, right, sub) {
@@ -284,7 +285,7 @@
     var warns = '';
     if (S.undatedPaid) warns += note('wait', 'alert', '<b>' + S.undatedPaid + ' pesanan lunas tidak punya tanggal lunas di riwayat</b> — tidak dihitung di periode mana pun.');
     if (S.noPriceItems) warns += note('wait', 'alert', '<b>' + S.noPriceItems + ' item terhitung belum punya harga final</b> — tidak ikut omzet.');
-    if (c.missingCostItems) warns += note('wait', 'alert', '<b>Untung belum lengkap: ' + c.missingCostItems + ' item tanpa modal</b> (' + c.missingCostOrders.map(esc).join(', ') + '). Item itu tidak dianggap bermodal Rp 0; ikut omzet, tidak ikut untung dan margin.');
+    if (c.missingCostItems) warns += note('wait', 'alert', '<b>Untung belum lengkap: ' + c.missingCostItems + ' item belum ada harga distributor</b> (' + c.missingCostOrders.map(esc).join(', ') + '). Item itu tidak dianggap berharga distributor Rp 0; ikut omzet, tidak ikut untung dan margin.');
     if (c.refundItems || S.prev.refundItems) warns += note('info', 'info', 'Termasuk koreksi refund' + (c.refundItems ? ': ' + c.refundItems + ' item senilai ' + rp(c.refundAmount) + ' dikeluarkan dari periode ini' : '') + '. Refund dikurangkan di periode tanggal lunas pesanannya, jadi angka periode lalu bisa berubah.');
 
     var cards;
@@ -295,8 +296,8 @@
       var profitUnknown = c.profitBase === 0 && c.missingCostItems > 0;
       cards = '<div class="stats">' +
         stat('Omzet', rp(c.omzet), none ? '0 pesanan lunas di periode ini' : 'tanpa ongkir', delta(cmp.omzet, S, 'rp')) +
-        stat('Untung kotor <span class="muted">(harga jual − modal)</span>', profitUnknown ? '—' : rp(c.profit), c.missingCostItems ? 'belum lengkap: ' + c.missingCostItems + ' item tanpa modal' : none ? 'belum ada penjualan' : 'belum dikurangi ongkir distributor', delta(cmp.profit, S, 'rp'), c.profit < 0 ? 'loss' : '') +
-        stat('Margin', pctTxt(c.margin), c.margin == null ? (none ? 'belum ada penjualan' : 'modal belum tercatat') : 'untung ÷ omzet', delta(cmp.margin, S, 'pt')) +
+        stat('Untung kotor <span class="muted">(harga jual − harga distributor)</span>', profitUnknown ? '—' : rp(c.profit), c.missingCostItems ? 'belum lengkap: ' + c.missingCostItems + ' item belum ada harga distributor' : none ? 'belum ada penjualan' : 'belum dikurangi ongkir distributor', delta(cmp.profit, S, 'rp'), c.profit < 0 ? 'loss' : '') +
+        stat('Margin', pctTxt(c.margin), c.margin == null ? (none ? 'belum ada penjualan' : 'harga distributor belum tercatat') : 'untung ÷ omzet', delta(cmp.margin, S, 'pt')) +
         stat('Pesanan lunas', String(c.orderCount), none ? '0 pesanan lunas' : '', delta(cmp.orders, S, 'n')) +
         stat('Rata-rata nilai pesanan', c.avg == null ? '—' : rp(c.avg), c.avg == null ? 'belum ada pesanan lunas' : 'omzet ÷ pesanan lunas', delta(cmp.avg, S, 'rp')) + '</div>';
     }
@@ -324,29 +325,33 @@
       '<div class="frow"><div class="fl">Batal & kedaluwarsa</div><div class="fv">' + (b10n ? '' : '<b class="num">0</b> <span>tidak ada pesanan batal atau kedaluwarsa</span>') +
       (b10n ? '<ul class="plain"><li><b class="num">' + (b10.cancelledBeforePaid + b10.cancelledAfterPaid) + '</b> batal' + (b10.cancelledAfterPaid ? ' — ' + b10.cancelledAfterPaid + ' setelah lunas, refund ' + rp(b10.refundTotal) : '') + '</li><li><b class="num">' + b10.expired + '</b> kedaluwarsa (tidak dibayar)</li></ul>' : '') + '</div></div></section>';
 
-    function money(x, inc) { return rp(x) + (inc ? '<span class="star" title="Belum semua item punya modal">*</span>' : ''); }
+    function money(x, inc) { return rp(x) + (inc ? '<span class="star" title="Belum semua item punya harga distributor">*</span>' : ''); }
     var incAny = c.products.some(function (p) { return p.incomplete; }) || c.brands.some(function (p) { return p.incomplete; }) || c.dists.some(function (p) { return p.incomplete; });
     var none5 = '<div class="calm">' + ic('tag') + '<span>Belum ada penjualan di periode ini.</span></div>';
     var tProd = c.products.length ? '<div class="tablewrap"><table><thead><tr><th>Produk</th><th class="num">Qty</th><th class="num">Omzet</th><th class="num hide-md">Untung</th></tr></thead><tbody>' +
       c.products.slice(0, 5).map(function (p) { return '<tr><td>' + esc(p.name) + '</td><td class="num">' + p.qty + '</td><td class="num">' + rp(p.omzet) + '</td><td class="num hide-md">' + money(p.profit, p.incomplete) + '</td></tr>'; }).join('') + '</tbody></table></div>' : none5;
     var tBrand = c.brands.length ? '<div class="tablewrap"><table><thead><tr><th>Brand</th><th class="num">Qty</th><th class="num">Omzet</th><th class="num hide-md">Untung</th></tr></thead><tbody>' +
       c.brands.slice(0, 5).map(function (p) { return '<tr><td>' + esc(p.name) + (p.hidden ? ' <span class="badge badge--wait">Disembunyikan di toko</span>' : '') + '</td><td class="num">' + p.qty + '</td><td class="num">' + rp(p.omzet) + '</td><td class="num hide-md">' + money(p.profit, p.incomplete) + '</td></tr>'; }).join('') + '</tbody></table></div>' : none5;
-    var tDist = c.dists.length ? '<div class="tablewrap"><table><thead><tr><th>Distributor</th><th class="num">PO dipesan</th><th class="num">Belanja modal</th><th class="num">Omzet</th><th class="num">Untung</th></tr></thead><tbody>' +
-      c.dists.map(function (p) { return '<tr><td>' + esc(distLabel(p.key)) + '</td><td class="num">' + p.pos + '</td><td class="num">' + rp(p.modal) + '</td><td class="num">' + rp(p.omzet) + '</td><td class="num">' + money(p.profit, p.incomplete) + '</td></tr>'; }).join('') + '</tbody></table></div>' : '<div class="calm">' + ic('store') + '<span>Belum ada PO yang dipesan untuk penjualan di periode ini.</span></div>';
+    function pctOf(p) { return p.incomplete || !(p.omzet > 0) ? '—' : (Math.round(p.profit / p.omzet * 1000) / 10).toString().replace('.', ',') + '%'; }
+    function ordLink(p, label) { var ids = Object.keys(p.ords || {}); return ids.length ? ' <a href="#/pesanan" data-act="orders-ids" data-ids="' + esc(ids.join(',')) + '">' + label.replace('{n}', ids.length) + '</a>' : ''; }
+    var tDist = c.dists.length ? '<div class="tablewrap"><table><thead><tr><th>Distributor</th><th class="num">PO dikonfirmasi</th><th class="num">Dibayar ke distributor (Rp)</th><th class="num">Dijual ke customer (Rp)</th><th class="num">Untung (Rp)</th><th class="num">Margin %</th></tr></thead><tbody>' +
+      c.dists.map(function (p) { var unk = p.key === '?'; return '<tr><td>' + (unk ? '<b>Belum ada PO dikonfirmasi</b>' + ordLink(p, 'lihat {n} pesanan') : esc(distLabel(p.key))) + '</td><td class="num">' + p.pos + '</td><td class="num">' + rp(p.modal) + '</td><td class="num">' + rp(p.omzet) + '</td><td class="num">' + money(p.profit, p.incomplete) + '</td><td class="num">' + pctOf(p) + '</td></tr>'; }).join('') + '</tbody></table></div>' : '<div class="calm">' + ic('store') + '<span>Belum ada PO yang dipesan untuk penjualan di periode ini.</span></div>';
+    var actIds = [], waitIds = [];
+    d.orders.forEach(function (o) { if (L.ACTIVE && L.ACTIVE.indexOf(o.status) < 0) return; var a2 = L.actionFor(o, d.pos); if (a2 && a2.kind === 'action') actIds.push(o.id); else if (a2) waitIds.push(o.id); });
 
     return '<section class="card salescard"><div class="cardhead"><h2>Penjualan' + (sample ? ' <span class="sample-tag">Data contoh</span>' : '') + '</h2></div>' +
       '<div class="row" style="align-items:flex-end;margin-bottom:var(--sp-3)"><div class="tabs" role="group" aria-label="Periode" style="margin:0">' + tabs + '</div>' + pick + '</div>' +
       '<p class="muted small" style="margin:0 0 var(--sp-4)"><b>' + esc(r.label) + '</b>: ' + esc(rangeTxt) + '</p>' + warns + cards + '</section>' +
       (S.noData ? '' : chart + '<div class="grid2 gridtop">' + fun + speed + '</div>' +
         '<div class="grid2 gridtop"><section class="card"><h2>Produk terlaris <span class="muted small">(5 teratas, urut omzet)</span></h2>' + tProd + '</section><section class="card"><h2>Brand terlaris</h2>' + tBrand + '</section></div>' +
-        '<section class="card"><h2>Per distributor</h2>' + tDist + (incAny ? '<p class="hint"><span class="star">*</span> Untung belum lengkap: ada item tanpa modal tercatat.</p>' : '') + '<p class="hint">Bet rakitan: omzet dan modal dibagi ke komponen menurut porsi modalnya.</p></section>') +
-      '<p class="muted small">Pesanan aktif sekarang: <b class="num">' + S.activeNow + '</b> (' + S.needAction + ' perlu tindakan, ' + S.waiting + ' menunggu pihak lain).</p>';
+        '<section class="card"><h2>Belanja ke distributor</h2><p class="muted small">Dari pesanan lunas di periode ini: berapa yang dibayar ke tiap distributor dan untung dari barangnya.</p>' + tDist + (incAny ? '<p class="hint"><span class="star">*</span> Untung belum lengkap: ada item belum ada harga distributor.</p>' : '') + '<p class="hint">Bet rakitan dipecah per komponen ke distributor pemasoknya. Jasa rakit masuk ke untung David.</p></section>') +
+      '<p class="muted small"><b class="num">' + S.activeNow + '</b> pesanan masih berjalan — ' + (actIds.length ? '<a href="#/pesanan" data-act="open-group"><b class="num">' + actIds.length + '</b> menunggu tindakan David</a>' : '<b class="num">0</b> menunggu tindakan David') + ', ' + (waitIds.length ? '<a href="#/pesanan" data-act="orders-ids" data-ids="' + esc(waitIds.join(',')) + '"><b class="num">' + waitIds.length + '</b> menunggu customer/distributor</a>' : '<b class="num">0</b> menunggu customer/distributor') + '.</p>';
   }
 
   function pgBeranda() {
     var d = getData(), AS = L.actionSummary(d.orders, d.pos), rows = AS.groups;
     var list = rows.map(function (g) {
-      return '<li><b class="cntbig num">' + g.n + '</b><div class="what"><b>' + GROUP_LABEL[g.group] + '</b><span class="muted small">tertua ' + age(g.oldest) + '</span></div><a class="btn sec sm" href="#/pesanan" data-act="open-group" data-g="' + g.group + '">Buka</a></li>';
+      return '<li><b class="cntbig num">' + g.n + '</b><div class="what"><b>' + GROUP_LABEL[g.group] + '</b><span class="muted small">tertua ' + age(g.oldest) + '</span>' + (g.group === 'bayar' ? '<span class="pthumbs">' + d.orders.filter(function (o) { return o.status === 'quoted' && o.payment && o.payment.status === 'pending_verification'; }).slice(0, 4).map(function (o) { return proofSlot(o, true); }).join('') + '</span>' : '') + '</div><a class="btn sec sm" href="#/pesanan" data-act="open-group" data-g="' + g.group + '">Buka</a></li>';
     }).join('');
     var sample = d.orders.some(function (o) { return o.sample; });
     return pageHead('Beranda', sample ? '<span class="sample-tag" data-sample>Data contoh</span>' : '') +
@@ -362,6 +367,7 @@
     var d = getData(), q = ordersQuery.trim().toLowerCase();
     var list = d.orders.map(function (o) { return { o: o, a: L.actionFor(o, d.pos) }; }).filter(function (x) {
       var s = x.o.status;
+      if (ordersIds && ordersIds.indexOf(x.o.id) < 0) return false;
       if (ordersFilter === 'tindakan' && !(x.a && x.a.kind === 'action')) return false;
       if (ordersFilter === 'tindakan' && ordersGroup && x.a.group !== ordersGroup) return false;
       if (ordersFilter === 'cancelled' && s !== 'cancelled' && s !== 'expired') return false;
@@ -384,7 +390,7 @@
           var o = x.o, t = L.totals(o), est = o.items.reduce(function (s, i) { return s + i.est_price * i.qty; }, 0);
           var isAct = x.a && x.a.kind === 'action';
           var extra = o.status === 'sourcing' && x.a && x.a.since ? age(x.a.since) : '';
-          return '<tr class="click' + (o.status === 'placed' ? ' newrow' : '') + '" data-act="open-order" data-id="' + esc(o.id) + '"><td><a class="mono" href="#/pesanan/' + esc(o.id) + '">' + esc(o.id) + '</a></td><td class="hide-md">' + fmtDT(o.created_at) + '</td><td>' + esc(custName(o)) + '</td><td class="num hide-md">' + o.items.length + '</td><td class="num">' + (t.jual ? num(t.total) : num(est) + '<span class="sub">estimasi</span>') + '</td><td>' + badge(OST, o.status, extra) + (isAct ? '<span class="sub"><b>' + esc(x.a.text) + '</b></span>' : '') + '</td><td><a class="btn text" href="#/pesanan/' + esc(o.id) + '">Buka</a></td></tr>';
+          return '<tr class="click' + (o.status === 'placed' ? ' newrow' : '') + '" data-act="open-order" data-id="' + esc(o.id) + '"><td><a class="mono" href="#/pesanan/' + esc(o.id) + '">' + esc(o.id) + '</a></td><td class="hide-md">' + fmtDT(o.created_at) + '</td><td>' + esc(custName(o)) + '</td><td class="num hide-md">' + o.items.length + '</td><td class="num">' + (t.jual ? num(t.total) : num(est) + '<span class="sub">estimasi</span>') + '</td><td>' + badge(OST, o.status, extra) + (isAct ? '<span class="sub"><b>' + esc(x.a.text) + '</b></span>' : '') + (o.status === 'quoted' && o.payment && o.payment.status === 'pending_verification' ? proofSlot(o, true) : '') + '</td><td><a class="btn text" href="#/pesanan/' + esc(o.id) + '">Buka</a></td></tr>';
         }).join('') + '</tbody></table></div>' : '<div class="card calm">' + ic('inbox') + '<span>Tidak ada pesanan yang cocok dengan filter ini.</span><button class="btn sec sm" data-act="filter" data-v="semua">Hapus filter</button></div>');
   }
 
@@ -447,9 +453,8 @@
       var pm = o.payment || {}, deadMs = L.ms(o.pay_deadline);
       nextHtml += '<p>Batas bayar: <b>' + fmtDT(o.pay_deadline) + '</b> (' + (deadMs > Date.now() ? 'sisa ' + age(2 * Date.now() - deadMs) : 'lewat') + ')</p>';
       if (pm.status === 'pending_verification') {
-        var mism = pm.amount != null && pm.amount !== t.total;
-        nextHtml += '<div class="note wait">' + ic('wallet') + '<div><b>Bukti transfer menunggu dicek.</b> Berkas: <span class="mono">' + esc(pm.proof_name || '—') + '</span> · ' + (pm.amount == null ? 'nominal tidak diisi customer' : 'nominal diklaim customer ' + rp(pm.amount)) + ' · total tagihan ' + rp(t.total) + '</div></div>' +
-          (mism ? note('bad', 'alert', '<b>Nominal tidak sama.</b> Selisih ' + (pm.amount - t.total > 0 ? '+' : '−') + rp(Math.abs(pm.amount - t.total)) + '. Periksa mutasi rekening sebelum menerima.') : '') +
+        nextHtml += proofCard(o, t);
+        nextHtml +=
           '<div class="row"><button class="btn" data-act="verify-ok" data-id="' + esc(id) + '">Terima pembayaran</button><button class="btn danger" data-act="verify-no" data-id="' + esc(id) + '">Tolak bukti…</button></div>';
       } else {
         nextHtml += (pm.status === 'rejected' ? note('bad', 'alert', 'Bukti terakhir ditolak: ' + esc(pm.reason || '') + '. Menunggu customer unggah ulang.') : '<p class="muted">Menunggu customer transfer dan unggah bukti.</p>') +
@@ -472,13 +477,15 @@
       nextHtml += '<p class="muted">' + (st === 'cancelled' ? 'Dibatalkan: ' + esc(o.cancel_reason || '') : 'Batas bayar lewat tanpa bukti.') + '</p>' +
         (o.refund ? note(o.refund.status === 'perlu_ditransfer' ? 'bad' : 'ok', 'wallet', '<b>Refund ' + rp(o.refund.amount) + ':</b> ' + (o.refund.status === 'perlu_ditransfer' ? 'perlu ditransfer ke customer.' : 'sudah ditransfer.')) + (o.refund.status === 'perlu_ditransfer' ? '<button class="btn" data-act="refund-done" data-id="' + esc(id) + '">Tandai refund sudah ditransfer</button>' : '') : '');
     } else nextHtml += '<p class="muted">Tidak ada tindakan lagi.</p>';
+    var inc = L.inconsistency(o, d.pos);
+    if (inc) nextHtml = '<div class="note bad" role="alert">' + ic('alert') + '<div><b>Data PO tidak konsisten.</b> Pesanan berstatus ' + esc(OST[st] ? OST[st][0] : st) + ', tetapi tidak ada PO aktif yang menutupi: ' + esc(inc.lines.join(', ')) + '. ' + (inc.cancelled.length ? 'PO terbatal otomatis bisa dipulihkan: ' + inc.cancelled.map(function (pid) { return '<button class="btn sm" data-act="restore-po" data-id="' + esc(pid) + '">Pulihkan ' + esc(pid) + '</button>'; }).join(' ') : 'Buat PO baru atau hubungi Kevin.') + '</div></div>' + nextHtml;
 
     var warn = '';
     if (unavail.length && ['placed', 'sourcing'].indexOf(st) >= 0) warn = note('partial', 'alert', '<b>' + unavail.length + ' item tidak tersedia — tanya customer</b> atau cari di distributor lain / tawarkan alternatif (tombol di baris item).');
 
     var profitCard = '';
     if (t.jual) profitCard = '<section class="card"><h2>Untung pesanan <span class="badge badge--neutral">hanya terlihat David</span></h2><div class="tablewrap"><table><tbody>' +
-      '<tr><td>Total modal (distributor)</td><td class="num">' + rp(t.modal) + '</td></tr><tr><td>Total harga jual barang</td><td class="num">' + rp(t.jual) + '</td></tr>' +
+      '<tr><td>Total Harga Distributor</td><td class="num">' + rp(t.modal) + '</td></tr><tr><td>Total harga jual barang</td><td class="num">' + rp(t.jual) + '</td></tr>' +
       '<tr class="total"><td>Untung</td><td class="num ' + (t.untung <= 0 ? 'loss' : 'profit') + '">' + rp(t.untung) + ' · ' + t.pct.toFixed(1).replace('.', ',') + '%</td></tr>' +
       '<tr><td class="muted">Ongkir (dipisah, bukan untung)</td><td class="num">' + rp(t.ongkir) + '</td></tr></tbody></table></div></section>';
 
@@ -525,13 +532,13 @@
     if (po.status === 'sent') foot += '<button class="btn sec" data-act="send-po-again" data-po="' + esc(po.id) + '">Kirim ulang via WA</button>';
     if (po.status === 'responded' && ['paid', 'fulfilling'].indexOf(ost) >= 0 && items.some(function (x) { return x.chosen; }))
       foot += '<button class="btn" data-act="confirm-po" data-po="' + esc(po.id) + '">' + ic('clip') + 'Konfirmasi beli via WA</button>';
-    var hist = (po.responses || []).length ? '<details><summary>Riwayat balasan (' + po.responses.length + ')</summary><div class="tablewrap"><table><thead><tr><th>Waktu</th><th>Item</th><th>Jawaban</th><th class="num">Modal (Rp)</th><th>ETA</th></tr></thead><tbody>' + po.responses.map(function (r) {
+    var hist = (po.responses || []).length ? '<details><summary>Riwayat balasan (' + po.responses.length + ')</summary><div class="tablewrap"><table><thead><tr><th>Waktu</th><th>Item</th><th>Jawaban</th><th class="num">Harga Distributor (Rp)</th><th>ETA</th></tr></thead><tbody>' + po.responses.map(function (r) {
       var pi = po.items.filter(function (x) { return x.line_id === r.line_id && x.component === r.component; })[0];
       return '<tr><td>' + fmtDT(r.at) + '</td><td>' + esc(pi ? pi.name : r.line_id) + '</td><td>' + (r.available ? 'Ada' : 'Tidak ada') + (r.note ? ' · ' + esc(r.note) : '') + '</td><td class="num">' + (r.cost_price != null ? num(r.cost_price) : '—') + '</td><td>' + (r.eta ? fmtD(r.eta) : '—') + '</td></tr>';
     }).join('') + '</tbody></table></div></details>' : '';
     return '<div class="po"><header><a class="mono" href="#/po/' + esc(po.id) + '">' + esc(po.id) + '</a><strong>' + esc(DS.distributorName(po.distributor_id)) + '</strong>' + badge(PST, po.status, late ? ageTxt : (po.status === 'sent' && ageHrs(po.sent_at) > 24 ? ageTxt : '')) +
       (showOrder && o ? '<span class="spacer"></span><a href="#/pesanan/' + esc(o.id) + '" class="mono">' + esc(o.id) + '</a>' : '') + '</header>' +
-      '<div class="body"><div class="tablewrap"><table><thead><tr><th>Item</th><th class="num">Qty</th><th>Jawaban</th><th class="num">Modal / unit (Rp)</th><th>Estimasi tiba</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>' + hist + '</div>' +
+      '<div class="body"><div class="tablewrap"><table><thead><tr><th>Item</th><th class="num">Qty</th><th>Jawaban</th><th class="num">Harga Distributor / unit (Rp)</th><th>Estimasi tiba</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>' + hist + '</div>' +
       (foot ? '<footer>' + foot + '</footer>' : '') + '</div>';
   }
 
@@ -571,12 +578,12 @@
       }).join('') + '<div class="row end" style="margin-top:12px"><button class="btn sec" data-act="wiz-all">Pilih semua</button><button class="btn" data-act="wiz-next"' + (chosen.length ? '' : ' disabled aria-disabled="true"') + '>Lanjut: pilih distributor</button></div>' + (chosen.length ? '' : '<p class="why" style="text-align:right">Centang minimal satu item dulu.</p>') + '</section>';
     }
     if (s === 2) {
-      var opts = '<option value="">— pilih distributor —</option>' + dists.map(function (x) { return '<option value="' + x.id + '">' + esc(x.name) + '</option>'; }).join('');
+      var opts = '<option value="">— pilih distributor —</option>' + dists.map(function (x) { return '<option value="' + esc(x.id) + '">' + esc(x.name) + '</option>'; }).join('');
       return head + '<section class="card"><h2>Pilih distributor untuk tiap item</h2><p class="muted small">Item bisa dipecah ke beberapa distributor — satu PO per distributor. Pemetaan brand → distributor belum diketahui, jadi dipilih manual.</p>' +
         '<div class="field" style="max-width:420px"><label class="f" for="all-d">Pakai satu distributor untuk semua</label><select id="all-d" class="input" data-act="wiz-all-dist">' + opts + '</select></div>' +
         '<div class="tablewrap"><table><thead><tr><th>Item</th><th>Distributor</th></tr></thead><tbody>' + chosen.map(function (u) {
           return '<tr><td>' + esc(u.name) + (u.variant ? ' — ' + esc(u.variant) : '') + ' × ' + u.qty + (u.label ? '<span class="sub">' + u.label + '</span>' : '') + '</td><td><select class="input" data-act="wiz-dist" data-key="' + esc(u.key) + '" aria-label="Distributor untuk ' + esc(u.name) + '">' +
-            dists.reduce(function (h, x) { return h + '<option value="' + x.id + '"' + (wiz.sel[u.key] === x.id ? ' selected' : '') + '>' + esc(x.name) + '</option>'; }, '<option value=""' + (wiz.sel[u.key] ? '' : ' selected') + '>— pilih distributor —</option>') + '</select></td></tr>';
+            dists.reduce(function (h, x) { return h + '<option value="' + esc(x.id) + '"' + (wiz.sel[u.key] === x.id ? ' selected' : '') + '>' + esc(x.name) + '</option>'; }, '<option value=""' + (wiz.sel[u.key] ? '' : ' selected') + '>— pilih distributor —</option>') + '</select></td></tr>';
         }).join('') + '</tbody></table></div>' +
         '<div class="row" style="margin-top:12px"><button class="btn sec" data-act="wiz-back">Kembali</button><span class="spacer"></span><button class="btn" data-act="wiz-next">Lanjut: periksa</button></div><div id="wiz-err"></div></section>';
     }
@@ -619,22 +626,22 @@
     var gone = o.items.filter(function (i) { return !L.isBillable(i); });
     var rows = o.items.filter(L.isBillable).map(function (it) {
       var q = quote.lines[it.line_id], offers = it.kind === 'rakitan' ? [] : L.offersOf(d.pos, o, it);
-      var distCell = it.kind === 'rakitan' ? 'Per komponen (termurah)' : offers.length > 1 ? '<select class="input" data-q="pick" data-line="' + it.line_id + '" aria-label="Distributor untuk ' + esc(it.name) + '">' + offers.map(function (e) { return '<option value="' + e.po.distributor_id + '"' + (q.pick === e.po.distributor_id ? ' selected' : '') + '>' + esc(DS.distributorName(e.po.distributor_id)) + ' — ' + num(e.pi.cost_price) + '</option>'; }).join('') + '</select>' : esc(DS.distributorName(q.pick));
+      var distCell = it.kind === 'rakitan' ? 'Per komponen (termurah)' : offers.length > 1 ? '<select class="input" data-q="pick" data-line="' + it.line_id + '" aria-label="Distributor untuk ' + esc(it.name) + '">' + offers.map(function (e) { return '<option value="' + esc(e.po.distributor_id) + '"' + (q.pick === e.po.distributor_id ? ' selected' : '') + '>' + esc(DS.distributorName(e.po.distributor_id)) + ' — ' + num(e.pi.cost_price) + '</option>'; }).join('') + '</select>' : esc(DS.distributorName(q.pick));
       return '<tr data-line="' + it.line_id + '"><td>' + esc(itemLabel(it)) + '<span class="sub">Kategori: ' + esc(L.categoryOf(it)) + ' · est. katalog ' + rp(it.est_price) + (q.extra ? ' · biaya rakit ' + rp(q.extra) + ' ikut di harga jual' : '') + '</span></td>' +
         '<td class="num">' + it.qty + '</td><td>' + distCell + '</td><td class="num" id="cost-' + it.line_id + '">' + num(q.cost) + '</td>' +
         '<td><div class="row" style="flex-wrap:nowrap"><input class="input num" style="width:110px" inputmode="decimal" data-q="mval" data-line="' + it.line_id + '" aria-label="Margin ' + esc(it.name) + '" value="' + esc(q.type === 'rp' ? num(q.value) : String(q.value).replace('.', ',')) + '">' +
         '<span class="seg" role="group" aria-label="Satuan margin"><button type="button" data-q="mtype" data-line="' + it.line_id + '" data-v="pct" aria-pressed="' + (q.type === 'pct') + '">%</button><button type="button" data-q="mtype" data-line="' + it.line_id + '" data-v="rp" aria-pressed="' + (q.type === 'rp') + '">Rp</button></span></div></td>' +
         '<td><div class="rp"><input class="input num" style="width:160px" inputmode="numeric" data-q="price" data-line="' + it.line_id + '" aria-label="Harga jual per unit ' + esc(it.name) + '" value="' + num(q.price) + '"></div></td>' +
         '<td class="num" id="profit-' + it.line_id + '"></td></tr>' +
-        '<tr data-warn="' + it.line_id + '" hidden><td colspan="7"><div class="note bad" style="margin:0">' + ic('alert') + '<div><b>Jual rugi / tanpa untung:</b> harga jual tidak di atas modal. Masih boleh disimpan, tapi dicatat di riwayat.</div></div></td></tr>';
+        '<tr data-warn="' + it.line_id + '" hidden><td colspan="7"><div class="note bad" style="margin:0">' + ic('alert') + '<div><b>Jual rugi / tanpa untung:</b> harga jual tidak di atas harga distributor. Masih boleh disimpan, tapi dicatat di riwayat.</div></div></td></tr>';
     }).join('');
     return '<a class="btn text" href="#/pesanan/' + esc(id) + '" data-act="quote-exit">' + ic('back') + 'Kembali ke pesanan</a>' + pageHead('Susun harga final — <span class="mono">' + esc(id) + '</span>') +
       (gone.length ? note('partial', 'alert', '<b>' + gone.length + ' item tidak ikut ditagih:</b> ' + gone.map(function (g) { return esc(g.name); }).join(', ')) : '') +
       '<section class="card"><p class="muted small" style="margin-top:0">Margin awal dari Pengaturan (per kategori), dibulatkan ke atas Rp1.000. Ubah margin (% atau Rp) atau ubah harga jual langsung — yang lain ikut dihitung. Harga yang sudah dikirim ke customer tidak berubah bila Pengaturan diganti.</p>' +
-      '<div class="tablewrap"><table><thead><tr><th>Item</th><th class="num">Qty</th><th>Distributor</th><th class="num">Modal / unit (Rp)</th><th>Margin</th><th>Harga jual / unit</th><th class="num">Untung (Rp)</th></tr></thead><tbody>' + rows + '</tbody></table></div></section>' +
+      '<div class="tablewrap"><table><thead><tr><th>Item</th><th class="num">Qty</th><th>Distributor</th><th class="num">Harga Distributor / unit (Rp)</th><th>Margin</th><th>Harga jual / unit</th><th class="num">Untung (Rp)</th></tr></thead><tbody>' + rows + '</tbody></table></div></section>' +
       '<div class="grid2"><section class="card"><h2>Ongkir & batas bayar</h2><div class="field"><label class="f" for="ship">Ongkir (diisi manual)</label><div class="rp"><input id="ship" class="input num" inputmode="numeric" data-q="ship" value="' + num(quote.shipping) + '"></div></div>' +
       '<div class="field"><label class="f" for="hrs">Batas bayar (jam dari sekarang)</label><input id="hrs" class="input num" inputmode="numeric" data-q="hours" value="' + quote.hours + '"></div></section>' +
-      '<section class="card"><h2>Ringkasan <span class="badge badge--neutral">hanya terlihat David</span></h2><div class="tablewrap"><table><tbody><tr><td>Total modal</td><td class="num" id="s-modal"></td></tr><tr><td>Total harga jual barang</td><td class="num" id="s-jual"></td></tr><tr class="total"><td>Total untung</td><td class="num" id="s-untung"></td></tr><tr><td class="muted">Ongkir (bukan untung)</td><td class="num" id="s-ongkir"></td></tr><tr><td><b>Total ditagih ke customer</b></td><td class="num" id="s-total"></td></tr></tbody></table></div></section></div>' +
+      '<section class="card"><h2>Ringkasan <span class="badge badge--neutral">hanya terlihat David</span></h2><div class="tablewrap"><table><tbody><tr><td>Total Harga Distributor</td><td class="num" id="s-modal"></td></tr><tr><td>Total harga jual barang</td><td class="num" id="s-jual"></td></tr><tr class="total"><td>Total untung</td><td class="num" id="s-untung"></td></tr><tr><td class="muted">Ongkir (bukan untung)</td><td class="num" id="s-ongkir"></td></tr><tr><td><b>Total ditagih ke customer</b></td><td class="num" id="s-total"></td></tr></tbody></table></div></section></div>' +
       '<div class="row end"><a class="btn sec" href="#/pesanan/' + esc(id) + '" data-act="quote-exit">Batal</a><button class="btn" data-act="quote-send">' + ic('send') + 'Kirim ke customer via WA…</button></div><div id="q-err"></div>';
   }
   function qCalc() {
@@ -666,8 +673,10 @@
   // ---------- Distributor / Katalog / Laporan / Pengaturan (versi sederhana) ----------
   function pgDistributor() {
     var d = getData();
-    return pageHead('Distributor') + '<div class="note info">' + ic('info') + '<div>Nomor WA di bawah masih <b>placeholder</b>. Pemetaan brand → distributor belum ada (belum diketahui) — distributor dipilih manual saat membuat PO.</div></div><div class="tablewrap"><table><thead><tr><th>Nama</th><th>Nomor WA</th><th>Catatan</th><th class="num">PO</th><th></th></tr></thead><tbody>' +
-      DS.getDistributors().map(function (x) { return '<tr><td><b>' + esc(x.name) + '</b></td><td class="mono">' + esc(x.wa) + '</td><td>' + esc(x.note || '—') + '</td><td class="num">' + d.pos.filter(function (p) { return p.distributor_id === x.id; }).length + '</td><td><button class="btn sm sec" data-act="edit-dist" data-id="' + x.id + '">Ubah</button></td></tr>'; }).join('') + '</tbody></table></div>';
+    var dl = DS.getDistributors();
+    if (!dl.length) return pageHead('Distributor') + '<div class="card calm">' + ic('info') + '<span>Belum ada distributor. Isi tab <span class="mono">distributors</span> di Google Sheet (kolom id, name, wa), lalu klik Tarik ulang di Pengaturan. Panduan: <span class="mono">prototype/gsheet/PANDUAN-ISI-DATA.md</span>.</span></div>';
+    return pageHead('Distributor') + '<div class="note info">' + ic('info') + '<div>Nomor WA yang kosong tampil <b>[?]</b> sampai David mengisinya. Pemetaan brand → distributor belum ada — distributor dipilih manual saat membuat PO.</div></div><div class="tablewrap"><table><thead><tr><th>Nama</th><th>Nomor WA</th><th>Catatan</th><th class="num">PO</th><th></th></tr></thead><tbody>' +
+      dl.map(function (x) { return '<tr><td><b>' + esc(x.name) + '</b></td><td class="mono">' + (x.wa ? esc(x.wa) : '[?] belum diisi') + '</td><td>' + esc(x.note || '—') + '</td><td class="num">' + d.pos.filter(function (p) { return p.distributor_id === x.id; }).length + '</td><td><button class="btn sm sec" data-act="edit-dist" data-id="' + esc(x.id) + '">Ubah</button></td></tr>'; }).join('') + '</tbody></table></div>';
   }
   function catRows() {
     var C = window.DS_CATALOG; if (!C || !Array.isArray(C.products)) return null;
@@ -681,9 +690,15 @@
   function pgKatalog() {
     var rows = catRows();
     if (!rows) return pageHead('Katalog') + '<div class="card calm">' + ic('tag') + '<span>Katalog belum tersedia (<span class="mono">shared/catalog.js</span> belum ada). Dashboard tetap berjalan memakai data dari pesanan.</span></div>';
+    var inc = (window.DS_CATALOG && window.DS_CATALOG.incomplete) || [];
+    var incHtml = inc.length ? '<div class="note wait">' + ic('alert') + '<div><b>' + inc.length + ' baris produk belum lengkap dan TIDAK tampil di toko.</b> Perbaiki barisnya di tab <span class="mono">products</span> di Google Sheet.</div></div>' +
+      '<div class="tablewrap"><table><thead><tr><th>SKU</th><th>Nama</th><th>Status</th></tr></thead><tbody>' + inc.map(function (r) {
+        return '<tr><td class="mono">' + esc(r.sku || '(kosong)') + '</td><td>' + esc(r.name || '(kosong)') + '</td><td><span class="badge badge--wait">data belum lengkap: ' + esc(r.missing.join(', ')) + '</span></td></tr>';
+      }).join('') + '</tbody></table></div>' : '';
+    if (!rows.length) return pageHead('Katalog', '', 'Hanya baca — isi produk di Google Sheet') + incHtml + (inc.length ? '' : '<div class="card calm">' + ic('tag') + '<span>Belum ada produk. Isi tab <span class="mono">products</span> di Google Sheet (urutan: categories, brands, distributors, products), lalu klik Tarik ulang di Pengaturan. Panduan: <span class="mono">prototype/gsheet/PANDUAN-ISI-DATA.md</span>.</span></div>');
     var q = catQuery.trim().toLowerCase();
     var list = rows.filter(function (r) { return !q || (r.name + ' ' + r.brand + ' ' + r.cat).toLowerCase().indexOf(q) >= 0; });
-    return pageHead('Katalog', '', 'Hanya baca — kelola produk menyusul') + '<div class="field" style="max-width:420px"><label class="f" for="cq">Cari produk</label><input id="cq" class="input" value="' + esc(catQuery) + '" data-input="cat-q"></div>' +
+    return pageHead('Katalog', '', 'Hanya baca — isi atau ubah produk di Google Sheet') + incHtml + '<div class="field" style="max-width:420px"><label class="f" for="cq">Cari produk</label><input id="cq" class="input" value="' + esc(catQuery) + '" data-input="cat-q"></div>' +
       '<div class="tablewrap"><table><thead><tr><th>Produk</th><th>Brand</th><th>Kategori</th><th class="num">Harga est. (Rp)</th></tr></thead><tbody>' + list.slice(0, 300).map(function (r) { return '<tr><td>' + esc(r.name) + '</td><td>' + esc(r.brand) + (r.hidden ? ' <span class="badge badge--wait">Brand disembunyikan</span>' : '') + '</td><td>' + esc(r.cat) + '</td><td class="num">' + (r.price != null ? num(r.price) : '—') + '</td></tr>'; }).join('') + '</tbody></table></div>';
   }
   function pgLaporan() {
@@ -695,15 +710,15 @@
     }).join('');
     var un = sum.jual - sum.modal;
     return pageHead('Laporan', '<span class="badge badge--neutral">hanya terlihat David</span>') + '<section class="card"><h2>Jumlah pesanan per status</h2><div class="badges">' + Object.keys(by).map(function (k) { return badge(OST, k, by[k] + ' pesanan'); }).join('') + '</div></section>' +
-      '<section><h2>Untung per pesanan (yang sudah punya harga final, tidak termasuk batal)</h2><div class="tablewrap"><table><thead><tr><th>No. Order</th><th>Customer</th><th>Status</th><th class="num">Modal (Rp)</th><th class="num">Jual (Rp)</th><th class="num">Untung (Rp)</th><th class="num">%</th></tr></thead><tbody>' + rows +
-      '<tr class="total"><td colspan="3">Total</td><td class="num">' + num(sum.modal) + '</td><td class="num">' + num(sum.jual) + '</td><td class="num">' + num(un) + '</td><td class="num">' + (sum.modal ? (un / sum.modal * 100).toFixed(1).replace('.', ',') : '0') + '%</td></tr></tbody></table></div><p class="hint">Ongkir tidak dihitung sebagai untung. Angka CONTOH.</p></section>';
+      '<section><h2>Untung per pesanan (yang sudah punya harga final, tidak termasuk batal)</h2><div class="tablewrap"><table><thead><tr><th>No. Order</th><th>Customer</th><th>Status</th><th class="num">Harga Distributor (Rp)</th><th class="num">Jual (Rp)</th><th class="num">Untung (Rp)</th><th class="num">%</th></tr></thead><tbody>' + rows +
+      '<tr class="total"><td colspan="3">Total</td><td class="num">' + num(sum.modal) + '</td><td class="num">' + num(sum.jual) + '</td><td class="num">' + num(un) + '</td><td class="num">' + (sum.modal ? (un / sum.modal * 100).toFixed(1).replace('.', ',') : '0') + '%</td></tr></tbody></table></div><p class="hint">Ongkir tidak dihitung sebagai untung.</p></section>';
   }
   function pgPengaturan() {
     var s = DS.getSettings();
     return pageHead('Pengaturan') + '<section class="card" id="sync-card"><h2>Sumber data</h2><div id="sync-box"></div></section><section class="card"><h2>Margin per kategori</h2><p class="muted small">Dipakai sebagai nilai awal saat menyusun harga final. Mengubahnya tidak mengubah harga pesanan yang sudah dikirim ke customer.</p><div class="grid2" id="set-margins">' +
       DS.CATEGORIES.map(function (c) { return '<div class="field"><label class="f" for="m-' + c[0] + '">' + c[1] + ' (%)</label><input id="m-' + c[0] + '" class="input num" inputmode="decimal" data-m="' + c[0] + '" value="' + String(s.margins[c[0]]).replace('.', ',') + '"></div>'; }).join('') + '</div></section>' +
-      '<section class="card"><h2>Alamat David (alamat kirim di PO)</h2><div class="field"><label class="f" for="s-addr">Alamat lengkap</label><textarea id="s-addr" class="input">' + esc(s.address) + '</textarea></div><div class="field" style="max-width:360px"><label class="f" for="s-wa">WhatsApp David</label><input id="s-wa" class="input" value="' + esc(s.david_wa) + '"></div></section>' +
-      '<section class="card"><h2>Rekening transfer (placeholder)</h2><div class="grid2"><div class="field"><label class="f" for="s-bank">Bank</label><input id="s-bank" class="input" value="' + esc(s.bank.bank) + '"></div><div class="field"><label class="f" for="s-rek">Nomor rekening</label><input id="s-rek" class="input" value="' + esc(s.bank.no) + '"></div></div><div class="field"><label class="f" for="s-an">Atas nama</label><input id="s-an" class="input" value="' + esc(s.bank.name) + '"></div><div class="field" style="max-width:260px"><label class="f" for="s-hrs">Batas bayar default (jam)</label><input id="s-hrs" class="input num" inputmode="numeric" value="' + s.pay_hours + '"></div></section>' +
+      '<section class="card"><h2>Toko David (tampil di toko online dan alamat kirim di PO)</h2><div class="field"><label class="f" for="s-addr">Alamat lengkap</label><textarea id="s-addr" class="input">' + esc(s.address) + '</textarea></div><div class="field" style="max-width:360px"><label class="f" for="s-wa">WhatsApp David</label><input id="s-wa" class="input" inputmode="tel" placeholder="0812…" value="' + esc(s.david_wa) + '"><div class="hint">Dipakai tombol WhatsApp di toko online. Boleh 08… atau 62….</div></div><div class="field"><label class="f" for="s-hours">Jam operasional</label><input id="s-hours" class="input" placeholder="mis. Senin–Sabtu 09.00–17.00" value="' + esc(s.store_hours || '') + '"><div class="hint">Tampil di footer toko online. Kosong = tidak ditampilkan.</div></div></section>' +
+      '<section class="card"><h2>Rekening transfer</h2><div class="grid2"><div class="field"><label class="f" for="s-bank">Bank</label><input id="s-bank" class="input" value="' + esc(s.bank.bank) + '"></div><div class="field"><label class="f" for="s-rek">Nomor rekening</label><input id="s-rek" class="input" value="' + esc(s.bank.no) + '"></div></div><div class="field"><label class="f" for="s-an">Atas nama</label><input id="s-an" class="input" value="' + esc(s.bank.name) + '"></div><div class="field" style="max-width:260px"><label class="f" for="s-hrs">Batas bayar default (jam)</label><input id="s-hrs" class="input num" inputmode="numeric" value="' + s.pay_hours + '"></div></section>' +
       '<div class="row end"><button class="btn" data-act="save-settings">Simpan perubahan</button></div>';
   }
 
@@ -747,124 +762,7 @@
     else toast(name + ' disembunyikan dari toko' + (products ? ' — ' + products + ' produk tidak terlihat customer.' : '.'), null, { label: 'Batalkan', fn: function () { setBrand(id, name, true, 0); } });
   }
 
-  // ---------- data contoh penjualan (hanya mode lokal; semua ditandai CONTOH) ----------
-  // Dipakai Beranda supaya ada pesanan lunas tersebar beberapa minggu/bulan. Harga dari katalog contoh:
-  // modal = 84% harga estimasi (dibulatkan Rp1.000), harga jual = modal + margin kategori. Bukan data David.
-  function seedSalesSamples() {
-    var C = window.DS_CATALOG;
-    if (!C || !Array.isArray(C.products) || !C.products.length) return false;
-    if (DS.syncStatus && DS.syncStatus().mode !== 'local') return false;
-    var orders = DS.getOrders(), pos = DS.getPOs();
-    if (orders.some(function (o) { return o.sales_sample; })) return false;
-
-    var NOW = Date.now(), H = HR;
-    function prod(brand, start) { return C.products.filter(function (p) { return p.brand === brand && p.name.indexOf(start) === 0; })[0]; }
-    var CAT = { 'bet-jadi': 'bet_jadi', latihan: 'alat_latihan' };
-    var DIST = { Butterfly: 'daya-prima', Yasaka: 'daya-prima', Gewo: 'daya-prima', Donic: 'donic', Andro: 'andro', Stiga: 'stiga', DHS: 'sinar-surya', Xiom: 'sinar-surya', Nittaku: 'sinar-surya' };
-    var marg = DS.getSettings().margins;
-    var K = {
-      t05: prod('Butterfly', 'Tenergy 05'), d09: prod('Butterfly', 'Dignics'), visc: prod('Butterfly', 'Viscaria'), tb3: prod('Butterfly', 'Timo Boll 3000'),
-      jp01: prod('Donic', 'Bluefire JP01'), otc: prod('Donic', 'Ovtcharov'), r47: prod('Andro', 'Rasanter'), tco: prod('Andro', 'Treiber CO'),
-      dna: prod('Stiga', 'DNA'), acr: prod('Stiga', 'Allround'), mlc: prod('Yasaka', 'Ma Lin Carbon'), h3n: prod('DHS', 'Hurricane 3'),
-      dj40: prod('DHS', 'DJ40'), vega: prod('Xiom', 'Vega'), tal: prod('Gewo', 'Talent'), lez: prod('Butterfly', 'Lezoline'), nit: prod('Nittaku', 'Premium')
-    };
-    function item(line, key, qty) {
-      var p = K[key]; if (!p) return null;
-      var cost = Math.round(p.price * 0.84 / 1000) * 1000, cat = CAT[p.category] || p.category;
-      var price = L.priceFrom(cost, 'pct', marg[cat] != null ? marg[cat] : 15, 0);
-      var variant = p.category === 'karet' ? 'Max · Merah' : p.category === 'blade' ? 'FL' : '';
-      return { line_id: line, kind: 'product', sku: p.sku, brand: p.brand, name: p.name, variant: variant, qty: qty, est_price: p.price, category: cat,
-        cost_price: cost, margin_type: 'pct', margin_value: Math.round((price - cost) / cost * 1000) / 10, final_price: price, item_status: 'accepted', distributor_id: DIST[p.brand] || 'daya-prima' };
-    }
-    function dayStart(daysAgo) { var p = L.wibParts(NOW - daysAgo * 24 * H); return Date.UTC(p.y, p.m, p.d) - 7 * H; }
-    function ymd(ms) { return DS.isoWIB(ms).slice(0, 10).replace(/-/g, ''); }
-    function pad4(n) { return ('0000' + n).slice(-4); }
-
-    // d = hari lalu saat lunas, h = jam WIB lunas, qh = jam dari dibuat sampai harga final, ph = jam dari harga final sampai lunas
-    var SPEC = [
-      { d: 0, h: 9, qh: 5, ph: 3, end: 'paid', l: [['t05', 2]] },
-      { d: 1, h: 14, qh: 8, ph: 6, end: 'fulfilling', l: [['mlc', 1], ['vega', 2]] },
-      { d: 2, h: 10, qh: 4, ph: 12, end: 'shipped', l: [['jp01', 2], ['dj40', 1]] },
-      { d: 3, h: 16, qh: 40, ph: 5, end: 'completed', l: [['otc', 1]] },
-      { d: 5, h: 11, qh: 6, ph: 20, end: 'completed', l: [['r47', 2], ['tco', 1]] },
-      { d: 6, h: 19, qh: 3, ph: 4, end: 'completed', l: [['h3n', 3]] },
-      { d: 6, h: 8, qh: 7, ph: 2, end: 'cancelled_paid', l: [['dna', 2]] },
-      { d: 4, h: 12, qh: 5, end: 'expired', l: [['acr', 1]] },
-      { d: 2, h: 15, qh: 10, end: 'cancelled_early', l: [['d09', 1]] },
-      { d: 9, h: 10, qh: 9, ph: 14, end: 'completed', l: [['d09', 1], ['t05', 1]] },
-      { d: 12, h: 13, qh: 6, ph: 8, end: 'completed', l: [['visc', 1]] },
-      { d: 15, h: 9, qh: 12, ph: 10, end: 'completed', l: [['jp01', 1], ['r47', 1]] },
-      { d: 19, h: 17, qh: 5, ph: 6, end: 'completed', l: [['tal', 1], ['h3n', 2]] },
-      { d: 23, h: 11, qh: 28, ph: 9, end: 'completed', l: [['lez', 1]] },
-      { d: 27, h: 14, qh: 4, ph: 5, end: 'completed_refund', l: [['t05', 1], ['nit', 1]] },
-      { d: 31, h: 10, qh: 6, ph: 7, end: 'completed', l: [['otc', 1], ['vega', 1]] },
-      { d: 34, h: 15, qh: 8, ph: 11, end: 'completed', l: [['mlc', 1]] },
-      { d: 37, h: 9, qh: 5, ph: 6, end: 'completed', l: [['tb3', 2], ['dj40', 2]] },
-      { d: 41, h: 13, qh: 7, ph: 8, end: 'completed', l: [['dna', 1], ['acr', 1]] },
-      { d: 48, h: 10, qh: 6, ph: 5, end: 'completed', l: [['t05', 2]] },
-      { d: 55, h: 16, qh: 9, ph: 10, end: 'completed', l: [['d09', 1]] },
-      { d: 62, h: 11, qh: 5, ph: 6, end: 'completed', l: [['r47', 1], ['jp01', 1]] },
-      { d: 66, h: 14, qh: 6, end: 'expired', l: [['visc', 1]] }
-    ];
-    var NAMES = ['Andi K.', 'Maya S.', 'Bayu R.', 'Citra D.', 'Fajar H.', 'Gita N.', 'Hadi P.', 'Intan O.', 'Joko W.', 'Kirana T.', 'Lukman E.', 'Mira F.'];
-    var SHIP = [20000, 25000, 30000, 35000], newOrders = [], newPos = [], poN = 8000;
-
-    SPEC.forEach(function (sp, i) {
-      var paidMs = Math.min(dayStart(sp.d) + sp.h * H, NOW - 30 * 60000);
-      var quotedMs = sp.ph != null ? paidMs - sp.ph * H : Math.min(dayStart(sp.d) + sp.h * H, NOW - 2 * H);
-      var createdMs = quotedMs - sp.qh * H, srcMs = createdMs + 2 * H;
-      var items = sp.l.map(function (x, k) { return item('L' + (k + 1), x[0], x[1]); }).filter(Boolean);
-      if (!items.length) return;
-      var end = sp.end, ship = SHIP[i % 4], id = 'DS-' + ymd(createdMs) + '-' + pad4(8000 + i);
-      var hist = function (s, ms, by, nt) { return { at: DS.isoWIB(ms), status: s, by: by, note: nt || '' }; };
-      var history = [hist('placed', createdMs, 'customer', 'Pesanan diajukan (CONTOH)'), hist('sourcing', srcMs, 'david', 'PO dikirim (CONTOH)'), hist('quoted', quotedMs, 'david', 'Harga final dikirim (CONTOH)')];
-      var o = { id: id, created_at: DS.isoWIB(createdMs), status: 'quoted', sample: true, sales_sample: true,
-        customer: { name: NAMES[i % NAMES.length] + ' (CONTOH)', wa: '62800000' + pad4(9000 + i), address: 'Jl. Contoh No. ' + (i + 1) + ', Jakarta', city: 'Jakarta', note: '' },
-        items: items, shipping_fee: ship, pay_deadline: DS.isoWIB(quotedMs + 24 * H), payment: { status: 'none' }, shipment: null, history: history };
-      var total = items.reduce(function (s, it) { return s + it.final_price * it.qty; }, 0);
-      var hasPaid = ['paid', 'fulfilling', 'shipped', 'completed', 'completed_refund', 'cancelled_paid'].indexOf(end) >= 0;
-
-      if (end === 'expired') {
-        items.forEach(function (it) { it.item_status = 'available'; });
-        o.status = 'expired'; history.push(hist('expired', quotedMs + 24 * H, 'sistem', 'Batas bayar lewat tanpa bukti'));
-      } else if (end === 'cancelled_early') {
-        items.forEach(function (it) { it.item_status = 'cancelled'; });
-        o.status = 'cancelled'; o.cancel_reason = 'Customer tidak jadi (CONTOH)'; history.push(hist('cancelled', quotedMs + 6 * H, 'david', 'Dibatalkan: Customer tidak jadi (CONTOH)'));
-      } else if (hasPaid) {
-        o.payment = { status: 'verified', proof_name: 'bukti-contoh.jpg', amount: total + ship, at: DS.isoWIB(paidMs - H), verified_at: DS.isoWIB(paidMs) };
-        history.push(hist('paid', paidMs, 'david', 'Bukti transfer diterima (CONTOH)'));
-        var steps = [['fulfilling', 2, 'fulfilling'], ['received', 30, 'received'], ['shipped', 32, 'shipped'], ['completed', 100, 'completed']];
-        var upto = { paid: -1, fulfilling: 0, shipped: 2, completed: 3, completed_refund: 3, cancelled_paid: 0 }[end];
-        o.status = upto < 0 ? 'paid' : steps[upto][0];
-        for (var s = 0; s <= upto; s++) if (paidMs + steps[s][1] * H <= NOW) history.push(hist(steps[s][0], paidMs + steps[s][1] * H, 'david', '(CONTOH)'));
-        else { o.status = history[history.length - 1].status; break; }
-        items.forEach(function (it) { it.item_status = o.status === 'paid' || o.status === 'fulfilling' ? 'accepted' : o.status === 'received' ? 'received' : 'shipped'; });
-        if (end === 'completed_refund') { var last = items[items.length - 1]; last.refunded = true; last.item_status = 'cancelled'; }
-        if (end === 'cancelled_paid') {
-          items.forEach(function (it) { it.item_status = 'cancelled'; });
-          o.status = 'cancelled'; o.cancel_reason = 'Distributor tidak sanggup (CONTOH)';
-          o.refund = { amount: total + ship, status: 'sudah_ditransfer' };
-          history.push(hist('cancelled', paidMs + 20 * H, 'david', 'Dibatalkan: Distributor tidak sanggup (CONTOH) | Refund ' + rp(total + ship)));
-        }
-      }
-      // PO per distributor untuk pesanan yang sudah lunas (modal tercatat di PO confirmed)
-      if (hasPaid && end !== 'cancelled_paid') {
-        var by = {};
-        items.forEach(function (it) { (by[it.distributor_id] = by[it.distributor_id] || []).push(it); });
-        Object.keys(by).forEach(function (dk) {
-          var confirmed = o.status !== 'paid', received = ['received', 'shipped', 'completed'].indexOf(o.status) >= 0;
-          newPos.push({ id: 'PO-' + ymd(createdMs) + '-' + pad4(++poN), order_id: id, distributor_id: dk, status: !confirmed ? 'responded' : received ? 'fulfilled' : 'confirmed',
-            created_at: DS.isoWIB(createdMs + H), sent_at: DS.isoWIB(srcMs), responded_at: DS.isoWIB(srcMs + 3 * H), responses: [],
-            items: by[dk].map(function (it) { return { line_id: it.line_id, component: null, sku: it.sku, name: it.brand + ' ' + it.name, variant: it.variant, qty: it.qty, cost_price: it.cost_price,
-              available: true, eta: null, received_qty: received ? it.qty : 0, chosen: true }; }) });
-        });
-      }
-      newOrders.push(o);
-    });
-    DS.saveOrders(orders.concat(newOrders));
-    DS.savePOs(pos.concat(newPos));
-    return true;
-  }
+  // (data contoh penjualan dihapus: dashboard tidak lagi membuat pesanan/produk contoh; INF-01)
 
   function mountSync() {
     var el = $('#sync-box'); if (!el) return;
@@ -873,6 +771,65 @@
     } else el.innerHTML = '<p class="muted">Pengaturan sumber data belum tersedia.</p>';
   }
   function syncBadge() { try { return DS.sync && typeof DS.sync.badgeHtml === 'function' ? DS.sync.badgeHtml() || '' : ''; } catch (e) { return ''; } }
+
+  // ---------- Bukti transfer (foto dimuat langsung dari Drive lewat proof_get; cache di memori per sesi) ----------
+  var proofCache = {}; // fileId -> { state:'loading'|'ok'|'err', kind:'img'|'pdf', url, msg }
+  function proofSlot(o, thumb) {
+    var pm = o.payment || {}; if (!pm.proof_file_id) return '';
+    return '<span class="' + (thumb ? 'pthumb' : 'pbox') + '" data-proof-file="' + esc(pm.proof_file_id) + '" data-proof-order="' + esc(o.id) + '"' + (thumb ? ' data-thumb="1"' : '') + '><span class="skel" role="status" aria-label="Memuat bukti transfer"></span></span>';
+  }
+  function proofHtml(c, orderId, fileId, thumb) {
+    if (!c || c.state === 'loading') return '<span class="skel" role="status" aria-label="Memuat bukti transfer"></span>';
+    if (c.state === 'err') return thumb ? '<span class="pthumb__err" title="' + esc(c.msg) + '">!</span>' : '<div class="note bad">' + ic('alert') + '<div><b>Foto bukti belum bisa dimuat.</b> ' + esc(c.msg) + '</div><button class="btn sec sm" data-act="proof-retry" data-file="' + esc(fileId) + '" data-id="' + esc(orderId) + '">Coba lagi</button></div>';
+    if (c.kind === 'pdf') return thumb ? '<span class="pthumb__pdf">PDF</span>' : '<div class="proofpdf"><b>Bukti berupa PDF</b><a class="btn" href="' + esc(c.url) + '" download="bukti-transfer.pdf">Unduh PDF</a></div>';
+    return thumb ? '<img class="pthumbimg" src="' + esc(c.url) + '" alt="Bukti transfer">' : '<img class="proofimg" src="' + esc(c.url) + '" alt="Bukti transfer (klik untuk memperbesar)" data-act="lb-open" data-id="' + esc(orderId) + '" tabindex="0">';
+  }
+  function loadProof(orderId, fileId) {
+    if (proofCache[fileId]) return;
+    proofCache[fileId] = { state: 'loading' };
+    DS.sync.proofGet(orderId).then(function (res) {
+      if (!res.ok) { proofCache[fileId] = { state: 'err', msg: res.message || 'Gagal memuat.' }; }
+      else if (res.mime === 'application/pdf') proofCache[fileId] = { state: 'ok', kind: 'pdf', url: 'data:application/pdf;base64,' + res.base64 }; // hanya diunduh, tidak ditampilkan se-origin (tanpa blob/iframe)
+      else if (res.mime === 'image/jpeg' || res.mime === 'image/png') proofCache[fileId] = { state: 'ok', kind: 'img', url: 'data:' + res.mime + ';base64,' + res.base64 };
+      else proofCache[fileId] = { state: 'err', msg: 'Jenis berkas tidak dikenal.' };
+      hydrateProofs();
+    });
+  }
+  function hydrateProofs() {
+    var els = $$('[data-proof-file]'), thumbs = 0;
+    els.forEach(function (el) {
+      var f = el.getAttribute('data-proof-file'), oid = el.getAttribute('data-proof-order'), th = !!el.getAttribute('data-thumb');
+      if (th && ++thumbs > 8) return; // daftar panjang: muat 8 thumbnail pertama saja
+      if (!proofCache[f]) loadProof(oid, f);
+      el.innerHTML = proofHtml(proofCache[f], oid, f, th);
+    });
+    if (!$('.pbox') && $('#lightbox')) closeLightbox();
+  }
+  function closeLightbox() { var l = $('#lightbox'); if (l && l.parentNode) l.parentNode.removeChild(l); }
+  function openLightbox(orderId) {
+    var o = orderById(orderId); if (!o) return;
+    var c = proofCache[o.payment && o.payment.proof_file_id]; if (!c || c.state !== 'ok' || c.kind !== 'img') return;
+    var t = L.totals(o), pend = o.status === 'quoted' && o.payment.status === 'pending_verification';
+    closeLightbox();
+    var lb = document.createElement('div'); lb.id = 'lightbox'; lb.className = 'lightbox'; lb.setAttribute('role', 'dialog'); lb.setAttribute('aria-modal', 'true'); lb.setAttribute('aria-label', 'Bukti transfer ' + o.id);
+    lb.innerHTML = '<div class="lightbox__bar"><span><b class="mono">' + esc(o.id) + '</b> · diklaim ' + rp(o.payment.amount) + ' · total tagihan ' + rp(t.total) + '</span><button class="btn sec sm" data-act="lb-close">Tutup</button></div>' +
+      '<div class="lightbox__stage"><img class="lightbox__img" src="' + esc(c.url) + '" alt="Bukti transfer, klik untuk zoom" data-act="lb-zoom"></div>' +
+      '<div class="lightbox__foot"><span class="muted small">Klik foto untuk zoom. Esc untuk menutup.</span>' + (pend ? '<button class="btn" data-act="verify-ok" data-id="' + esc(o.id) + '">Terima pembayaran</button><button class="btn danger" data-act="verify-no" data-id="' + esc(o.id) + '">Tolak bukti…</button>' : '') + '</div>';
+    document.body.appendChild(lb);
+  }
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && $('#lightbox') && !modalStack.length) closeLightbox(); });
+  function proofCard(o, t) { // kartu "Bukti transfer": foto besar + perbandingan nominal
+    var pm = o.payment || {}, bank = DS.getSettings().bank || {}, has = !!pm.proof_file_id;
+    var diff = pm.amount == null ? null : pm.amount - t.total, same = diff === 0;
+    var cmp = '<div class="proofcmp"><div class="proofcmp__row"><span>Nominal diklaim customer</span><b class="num">' + (pm.amount == null ? '—' : rp(pm.amount)) + '</b></div>' +
+      '<div class="proofcmp__row"><span>Total tagihan</span><b class="num">' + rp(t.total) + '</b></div>' +
+      '<div class="proofcmp__diff ' + (same ? 'ok' : 'bad') + '" role="status">' + (diff == null ? 'Nominal tidak diisi customer' : same ? 'Nominal SAMA' : 'Selisih ' + (diff > 0 ? '+' : '−') + rp(Math.abs(diff))) + '</div>' +
+      '<div class="proofcmp__row"><span>Rekening tujuan (Pengaturan)</span><b>' + esc((bank.bank || '[?]') + ' · ' + (bank.no || '[?]') + ' a.n. ' + (bank.name || '[?]')) + '</b></div>' +
+      '<div class="proofcmp__row"><span>Diunggah</span><b>' + (pm.uploaded_at || pm.at ? fmtDT(pm.uploaded_at || pm.at) : '—') + '</b></div>' +
+      '<div class="proofcmp__row"><span>Nama berkas</span><span class="mono">' + esc(pm.proof_name || '—') + '</span></div></div>';
+    var left = has ? proofSlot(o, false) : '<div class="note wait">' + ic('alert') + '<div><b>Customer belum mengunggah foto</b> (hanya nama berkas: <span class="mono">' + esc(pm.proof_name || '—') + '</span>). Minta bukti lewat WhatsApp sebelum menerima.</div></div>';
+    return '<section class="card proofcard"><h2>Bukti transfer</h2><div class="proofgrid"><div class="proofleft">' + left + '</div>' + cmp + '</div></section>';
+  }
 
   // ---------- dialog aksi ----------
   function waModal(o) { // o: {title, text, url, onSent, sentLabel, note}
@@ -900,10 +857,10 @@
   }
   function dlgReply(poId) {
     var po = poById(poId), items = po.items.filter(function (x) { return !x.superseded; });
-    var body = '<p class="muted small">Catat balasan distributor per item. Setiap simpan menjadi entri riwayat baru.</p><div class="tablewrap"><table><thead><tr><th>Item</th><th>Jawaban</th><th class="num">Modal / unit (Rp)</th><th>Estimasi tiba</th><th>Catatan</th></tr></thead><tbody>' + items.map(function (pi) {
+    var body = '<p class="muted small">Catat balasan distributor per item. Setiap simpan menjadi entri riwayat baru.</p><div class="tablewrap"><table><thead><tr><th>Item</th><th>Jawaban</th><th class="num">Harga Distributor / unit (Rp)</th><th>Estimasi tiba</th><th>Catatan</th></tr></thead><tbody>' + items.map(function (pi) {
       var key = L.unitKey(pi), av = pi.available === true ? 'y' : pi.available === false ? 'n' : '';
       return '<tr data-key="' + esc(key) + '"><td>' + esc(pi.name) + (pi.variant ? ' — ' + esc(pi.variant) : '') + ' × ' + pi.qty + '</td><td><select class="input" data-r="av" aria-label="Jawaban ' + esc(pi.name) + '" style="min-width:150px"><option value="">Belum dijawab</option><option value="y"' + (av === 'y' ? ' selected' : '') + '>Ada</option><option value="n"' + (av === 'n' ? ' selected' : '') + '>Tidak ada</option></select></td>' +
-        '<td><input class="input num" style="width:130px" inputmode="numeric" data-r="cost" aria-label="Harga modal ' + esc(pi.name) + '" value="' + (pi.cost_price != null ? num(pi.cost_price) : '') + '"></td><td><input class="input" type="date" data-r="eta" aria-label="Estimasi tiba ' + esc(pi.name) + '" value="' + esc(pi.eta || '') + '"></td><td><input class="input" data-r="note" aria-label="Catatan ' + esc(pi.name) + '" value="' + esc(pi.note || '') + '"></td></tr>';
+        '<td><input class="input num" style="width:130px" inputmode="numeric" data-r="cost" aria-label="Harga Distributor ' + esc(pi.name) + '" value="' + (pi.cost_price != null ? num(pi.cost_price) : '') + '"></td><td><input class="input" type="date" data-r="eta" aria-label="Estimasi tiba ' + esc(pi.name) + '" value="' + esc(pi.eta || '') + '"></td><td><input class="input" data-r="note" aria-label="Catatan ' + esc(pi.name) + '" value="' + esc(pi.note || '') + '"></td></tr>';
     }).join('') + '</tbody></table></div>';
     openModal({ title: 'Catat balasan ' + DS.distributorName(po.distributor_id) + ' — ' + po.id, body: body, wide: true, actions: [{ label: 'Batal', kind: 'sec' }, { label: 'Simpan balasan', fn: function (ov) {
       var rows = $$('tr[data-key]', ov).map(function (tr) { var a = $('[data-r="av"]', tr).value; return { key: tr.getAttribute('data-key'), available: a === '' ? null : a === 'y', cost: digits($('[data-r="cost"]', tr).value), eta: $('[data-r="eta"]', tr).value, note: $('[data-r="note"]', tr).value }; });
@@ -914,7 +871,7 @@
   }
   function dlgMove(poId, key) {
     var po = poById(poId);
-    openModal({ title: 'Pindahkan item ke distributor lain', body: '<div class="field"><label class="f" for="mv">Distributor tujuan</label><select id="mv" class="input">' + DS.getDistributors().filter(function (x) { return x.id !== po.distributor_id; }).map(function (x) { return '<option value="' + x.id + '">' + esc(x.name) + '</option>'; }).join('') + '</select></div>', actions: [{ label: 'Batal', kind: 'sec' }, { label: 'Pindahkan', fn: function (ov) { afterAction(A.movePoItem(poId, key, $('#mv', ov).value), 'Item dipindahkan.'); } }] });
+    openModal({ title: 'Pindahkan item ke distributor lain', body: '<div class="field"><label class="f" for="mv">Distributor tujuan</label><select id="mv" class="input">' + DS.getDistributors().filter(function (x) { return x.id !== po.distributor_id; }).map(function (x) { return '<option value="' + esc(x.id) + '">' + esc(x.name) + '</option>'; }).join('') + '</select></div>', actions: [{ label: 'Batal', kind: 'sec' }, { label: 'Pindahkan', fn: function (ov) { afterAction(A.movePoItem(poId, key, $('#mv', ov).value), 'Item dipindahkan.'); } }] });
   }
   function dlgConfirmPo(poId) {
     var po = poById(poId), o = orderById(po.order_id), dd = L.dist(po.distributor_id), text = L.poConfirmText(po, o), s = DS.getSettings();
@@ -922,7 +879,17 @@
       note: 'Pesanan sudah lunas. Ini komitmen beli ke distributor.', textHtml: esc(text).replace(esc(s.address), '<b>' + esc(s.address) + '</b>'),
       onSent: function () { var r = A.confirmPo(poId); afterAction(r, poId + ' dikonfirmasi. Menunggu barang dari ' + dd.name + '.'); return r.ok; } });
   }
+  // pesanan lama tanpa kunci Lacak: minta server membuatnya (op admin), tarik ulang, lanjutkan. Mode lokal: lanjut tanpa kunci.
+  function withTrackKey(o, fn) {
+    if (o.track_key || !(DS.syncStatus && DS.syncStatus().mode === 'sheet') || !DS.sync.ensureTrackKey) { fn(o); return; }
+    DS.sync.ensureTrackKey(o.id).then(function (r) {
+      if (!r.ok) { toast('Kunci tautan Lacak belum bisa dibuat (' + (r.error || 'gagal') + '). Tautan tanpa kunci tidak akan bisa dibuka customer.', 'err'); fn(o); return; }
+      DS.sync.pull().then(function () { fn(orderById(o.id) || o); });
+    });
+  }
   function dlgQuoteSend() {
+    var o0 = orderById(quote.orderId); if (o0 && !o0.track_key && DS.syncStatus && DS.syncStatus().mode === 'sheet' && !dlgQuoteSend._tried) { dlgQuoteSend._tried = true; withTrackKey(o0, function () { dlgQuoteSend(); }); return; }
+    dlgQuoteSend._tried = false;
     var c = qCalc(), o = orderById(quote.orderId), s = DS.getSettings();
     var tmp = JSON.parse(JSON.stringify(o));
     tmp.items.forEach(function (it) { var q = quote.lines[it.line_id]; if (q) { it.final_price = q.price; it.cost_price = q.cost; } });
@@ -957,8 +924,9 @@
 
   // ---------- event delegasi ----------
   var ACT = {
-    'filter': function (el) { ordersFilter = el.getAttribute('data-v'); ordersGroup = ''; render(); },
-    'open-group': function (el) { ordersFilter = 'tindakan'; ordersGroup = el.getAttribute('data-g') || ''; },
+    'filter': function (el) { ordersFilter = el.getAttribute('data-v'); ordersGroup = ''; ordersIds = null; render(); },
+    'orders-ids': function (el) { ordersIds = (el.getAttribute('data-ids') || '').split(',').filter(Boolean); ordersFilter = 'semua'; ordersGroup = ''; },
+    'open-group': function (el) { ordersIds = null; ordersFilter = 'tindakan'; ordersGroup = el.getAttribute('data-g') || ''; },
     'clear-group': function () { ordersGroup = ''; render(); },
     'bp': function (el) { bPeriod.kind = el.getAttribute('data-v'); if (bPeriod.kind !== 'pick') bPeriod.ym = ''; render(); },
     'bp-month': function (el) { bPeriod.ym = el.value; render(); },
@@ -975,7 +943,7 @@
     },
     'open-order': function (el, e) { if (e.target.closest('a')) return; go('pesanan/' + el.getAttribute('data-id')); },
     'open-po': function (el, e) { if (e.target.closest('a')) return; go('po/' + el.getAttribute('data-id')); },
-    'reset-demo': function () { openModal({ title: 'Reset data demo?', body: '<p>Semua pesanan dan PO di browser ini diganti data contoh awal. Pengaturan tidak diubah.</p>', actions: [{ label: 'Batal', kind: 'sec' }, { label: 'Reset data demo', kind: 'fill-danger', fn: function () { DS.resetDemo(); seedSalesSamples(); wiz = null; quote = null; bPeriod = { kind: 'month', ym: '' }; ordersGroup = ''; toast('Data demo dikembalikan.'); go('beranda'); render(); } }] }); },
+    'clear-local': function () { openModal({ title: 'Hapus data lokal browser ini?', body: '<p>Semua pesanan dan PO yang tersimpan <b>di browser ini</b> dihapus. Google Sheet tidak tersentuh. Pengaturan tidak diubah. Tidak bisa diurungkan.</p>', actions: [{ label: 'Batal', kind: 'sec' }, { label: 'Hapus data lokal', kind: 'fill-danger', fn: function () { DS.clearLocal(); wiz = null; quote = null; bPeriod = { kind: 'month', ym: '' }; ordersGroup = ''; toast('Data lokal browser ini dihapus.'); go('beranda'); render(); } }] }); },
     'copy': function (el) { copyText(el.getAttribute('data-v')); },
     'start-wiz': function () { wiz = null; },
     'start-quote': function () { quote = null; },
@@ -1013,13 +981,18 @@
       openModal({ title: 'Tawarkan produk alternatif', body: '<p class="muted small">Item diganti produk alternatif dan perlu PO baru ke distributor.</p><div class="field"><label class="f" for="a-n">Nama produk (dengan brand)</label><input id="a-n" class="input"></div><div class="field"><label class="f" for="a-v">Varian</label><input id="a-v" class="input" placeholder="Contoh: 2.1 mm · Merah"></div><div class="field"><label class="f" for="a-p">Harga estimasi</label><div class="rp"><input id="a-p" class="input num" inputmode="numeric"></div></div>',
         actions: [{ label: 'Batal', kind: 'sec' }, { label: 'Simpan alternatif', fn: function (ov) { var r = A.offerAlternative(id, ln, { name: $('#a-n', ov).value, variant: $('#a-v', ov).value, est_price: digits($('#a-p', ov).value) }); if (!r.ok) { fieldErr(ov, r.error); return false; } afterAction(r, 'Alternatif disimpan. Buat PO untuk item ini.'); } }] });
     },
+    'restore-po': function (el) { afterAction(A.restorePo(el.getAttribute('data-id')), 'PO dipulihkan. Pesanan bisa dilanjutkan (konfirmasi beli ke distributor).'); },
+    'lb-open': function (el) { openLightbox(el.getAttribute('data-id')); },
+    'lb-close': function () { closeLightbox(); },
+    'lb-zoom': function (el) { el.classList.toggle('zoomed'); },
+    'proof-retry': function (el) { delete proofCache[el.getAttribute('data-file')]; hydrateProofs(); },
     'verify-ok': function (el) { var id = el.getAttribute('data-id'); var o = orderById(id), t = L.totals(o);
       openModal({ title: 'Terima pembayaran?', body: '<p>Total tagihan <b>' + rp(t.total) + '</b>, ' + (o.payment.amount == null ? 'nominal tidak diisi customer' : 'nominal diklaim ' + rp(o.payment.amount)) + '. Pesanan menjadi Lunas.</p>' + (o.payment.amount != null && o.payment.amount !== t.total ? note('bad', 'alert', 'Nominal tidak sama — periksa mutasi rekening.') : ''), actions: [{ label: 'Batal', kind: 'sec' }, { label: 'Terima pembayaran', fn: function () { var r = A.verifyPayment(id, true); afterAction(r, 'Pembayaran diterima. Pesanan Lunas — konfirmasi beli ke distributor.'); } }] }); },
     'verify-no': function (el) { var id = el.getAttribute('data-id'); openModal({ title: 'Tolak bukti transfer?', body: '<div class="field"><label class="f" for="vn-r">Alasan (dilihat customer)</label><input id="vn-r" class="input"></div>', actions: [{ label: 'Batal', kind: 'sec' }, { label: 'Tolak bukti', kind: 'danger', fn: function (ov) { var r = A.verifyPayment(id, false, $('#vn-r', ov).value); if (!r.ok) { fieldErr(ov, r.error); return false; } afterAction(r, 'Bukti ditolak. Customer bisa unggah ulang.'); } }] }); },
     'extend': function (el) { afterAction(A.extendDeadline(el.getAttribute('data-id'), 24), 'Batas bayar diperpanjang 24 jam.'); },
     'pull': function (el) { var id = el.getAttribute('data-id'); openModal({ title: 'Tarik harga final?', body: '<p>Pesanan kembali ke "Menunggu balasan distributor" untuk dicek ulang. Customer akan melihat statusnya berubah.</p>', actions: [{ label: 'Batal', kind: 'sec' }, { label: 'Tarik harga final', fn: function () { afterAction(A.pullQuote(id), 'Harga final ditarik.'); } }] }); },
     'sim-proof': function (el) { afterAction(A.simulateProof(el.getAttribute('data-id')), 'Simulasi: bukti transfer masuk.'); },
-    'show-quote-wa': function (el) { var o = orderById(el.getAttribute('data-id')), text = L.quoteText(o); waModal({ title: 'Kirim ulang harga final', text: text, url: L.waLink(o.customer.wa, text), sentLabel: 'Sudah terkirim', textHtml: esc(text), onSent: function () { toast('Dicatat: harga final dikirim ulang.'); return true; } }); },
+    'show-quote-wa': function (el) { withTrackKey(orderById(el.getAttribute('data-id')), function (o) { var text = L.quoteText(o); waModal({ title: 'Kirim ulang harga final', text: text, url: L.waLink(o.customer.wa, text), sentLabel: 'Sudah terkirim', textHtml: esc(text), onSent: function () { toast('Dicatat: harga final dikirim ulang.'); return true; } }); }); },
     'assembly': function (el) { A.toggleAssembly(el.getAttribute('data-id'), el.getAttribute('data-line'), el.checked); },
     'ship': function (el) { dlgShip(el.getAttribute('data-id')); },
     'ship-wa': function (el) { var o = orderById(el.getAttribute('data-id')), t = L.shipText(o); waModal({ title: 'Kirim resi ke customer', text: t, url: L.waLink(o.customer.wa, t), sentLabel: 'Sudah terkirim', textHtml: esc(t), onSent: function () { toast('Dicatat: resi dikirim ke customer.'); return true; } }); },
@@ -1040,7 +1013,7 @@
     'save-settings': function () {
       var s = DS.getSettings();
       $$('[data-m]').forEach(function (i) { s.margins[i.getAttribute('data-m')] = decimal(i.value); });
-      s.address = $('#s-addr').value; s.david_wa = $('#s-wa').value.replace(/\D/g, '') || s.david_wa;
+      s.address = $('#s-addr').value.trim(); s.david_wa = $('#s-wa').value.replace(/\D/g, ''); s.store_hours = $('#s-hours').value.trim();
       s.bank = { bank: $('#s-bank').value, no: $('#s-rek').value, name: $('#s-an').value }; s.pay_hours = digits($('#s-hrs').value) || 24;
       DS.saveSettings(s); toast('Pengaturan disimpan. Harga pesanan yang sudah dikirim tidak berubah.');
     }
@@ -1081,7 +1054,7 @@
   });
   window.addEventListener('hashchange', function () { render(); window.scrollTo(0, 0); });
 
-  function boot() { DS.seedIfEmpty(); seedSalesSamples(); render(); }
+  function boot() { render(); }
   function softRender() { // data/sumber berubah: jangan merusak isian yang sedang diketik atau dialog yang terbuka
     var a = document.activeElement, typing = a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && $('#main').contains(a);
     if (modalStack.length || typing) { renderSide(route()[0] || 'beranda'); return; }
