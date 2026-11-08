@@ -271,3 +271,49 @@ table.brands tr.off td { background:var(--n-50); }
 .lightbox__stage { overflow:auto; display:grid; place-items:center; padding:var(--sp-4); }
 .lightbox__img { max-width:100%; max-height:100%; object-fit:contain; cursor:zoom-in; }
 .lightbox__img.zoomed { max-width:none; max-height:none; width:auto; cursor:zoom-out; transform:scale(2); transform-origin:center top; margin:0 auto; }
+
+/* kartu daftar (HP) + filter satu baris */
+.ocards { display:none; }
+.tabs--one { flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:thin; }
+.tabs--one .tab { flex:none; white-space:nowrap; }
+.ocard { background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md); padding:var(--sp-3) var(--sp-4); display:grid; gap:var(--sp-1); cursor:pointer; }
+.ocard.newrow { box-shadow:inset 4px 0 0 var(--brand-700); }
+.oc-top, .oc-sum { display:flex; justify-content:space-between; align-items:baseline; gap:var(--sp-2); }
+.oc-sum { justify-content:flex-start; gap:var(--sp-3); }
+.oc-name { font-weight:600; overflow-wrap:anywhere; }
+.oc-act { font-size:var(--fs-16); }
+@media (max-width:639px) {
+  .ocards { display:grid; gap:var(--sp-2); }
+  .otable { display:none; }
+  .shell { grid-template-rows:auto 1fr; align-content:start; } /* min-height:100vh membagi sisa tinggi ke baris nav -> blok putih kosong di halaman pendek */
+}
+
+/* bar bawah HP - di luar .shell, tanpa ancestor ber-transform, supaya fixed tidak ikut menggulung */
+.tabbar, .hdr-sync { display:none; }
+@media (max-width:639px) {
+  .nav { display:none; }
+  .side { padding:var(--sp-1) var(--sp-3); }
+  .brand { display:flex; align-items:center; justify-content:space-between; gap:var(--sp-2); padding:var(--sp-1) 0; }
+  .brand small { display:none; }
+  .brand .logo-full { display:none; }
+  .brand .logo-mark { display:block; height:28px; width:auto; }
+  .hdr-sync { display:block; min-width:0; font-size:var(--fs-14); }
+  .pagehead [data-ds-badge] { display:none; } /* lencana sumber data pindah ke header HP */
+  .main { padding-bottom:calc(64px + env(safe-area-inset-bottom) + var(--sp-6)); }
+  .tabbar { display:flex; position:fixed; left:0; right:0; bottom:0; z-index:60; background:var(--surface); border-top:1px solid var(--border-strong); padding-bottom:env(safe-area-inset-bottom); box-shadow:0 -2px 8px rgba(15,40,67,.08); }
+  .tabbar > a, .tabbar > button { flex:1 1 0; min-width:0; height:64px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; position:relative; color:var(--text-muted); text-decoration:none; background:none; border:0; font:600 12px/1.2 var(--font-sans); cursor:pointer; padding:0 2px; }
+  .tabbar svg { width:24px; height:24px; stroke:currentColor; fill:none; stroke-width:1.75; stroke-linecap:round; stroke-linejoin:round; }
+  .tabbar > button[data-tab="more"] svg { fill:currentColor; }
+  .tabbar [aria-current="page"] { color:var(--brand-700); }
+  .tabbar [aria-current="page"]::before { content:""; position:absolute; top:0; left:22%; right:22%; height:3px; border-radius:0 0 3px 3px; background:var(--brand-700); }
+  .tabbar .tl { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
+  .tabbar .cnt { position:absolute; top:6px; left:calc(50% + 6px); min-width:20px; padding:0 5px; background:var(--brand-700); color:var(--on-primary); border-radius:999px; font-size:12px; line-height:20px; text-align:center; }
+  .tabbar .cnt[hidden] { display:none; }
+  .more-sheet[hidden] { display:none; }
+  .more-back { position:fixed; inset:0; background:rgba(15,40,67,.45); z-index:61; }
+  .more-panel { position:fixed; left:0; right:0; bottom:calc(64px + env(safe-area-inset-bottom)); z-index:62; background:var(--surface); border-radius:var(--r-md) var(--r-md) 0 0; padding:var(--sp-2) var(--sp-3); display:grid; box-shadow:var(--sh-3); }
+  .more-panel a { display:flex; align-items:center; gap:var(--sp-3); min-height:56px; padding:0 var(--sp-3); color:var(--text); text-decoration:none; font-weight:600; border-radius:var(--r-sm); }
+  .more-panel a[aria-current="page"] { background:var(--brand-50); color:var(--brand-700); }
+  .more-panel svg { width:22px; height:22px; stroke:currentColor; fill:none; stroke-width:1.75; }
+  .toasts { bottom:calc(64px + env(safe-area-inset-bottom) + var(--sp-3)); }
+}

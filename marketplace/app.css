@@ -235,8 +235,11 @@ p { margin:0; }
 .page__title { font-family:var(--font-display); font-weight:800; font-size:var(--fs-display-s); text-transform:uppercase; }
 .crumb { display:inline-flex; align-items:center; gap:4px; text-decoration:none; font-size:var(--fs-14); color:var(--text-muted); margin-bottom:var(--sp-3); min-height:var(--tap-min); }
 .crumb:hover { color:var(--link); }
-.view-in { animation:viewIn var(--dur-base) var(--ease-out) both; }
+.view-in { animation:viewIn var(--dur-base) var(--ease-out) backwards; }
 @keyframes viewIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+/* halaman dengan bar beli fixed: tanpa transform (transform/animasi di ancestor menjadikan fixed relatif ke halaman, bukan layar) */
+.view-in.has-buybar { animation-name:viewInFade; }
+@keyframes viewInFade { from { opacity:0; } to { opacity:1; } }
 [data-reveal] { opacity:0; transform:translateY(16px); transition:opacity var(--dur-slow) var(--ease-out),transform var(--dur-slow) var(--ease-out); transition-delay:calc(var(--i,0) * var(--stagger)); }
 [data-reveal].is-in { opacity:1; transform:none; }
 .note { background:var(--st-info-bg); color:var(--st-info-fg); border-radius:var(--r-md); padding:var(--sp-3) var(--sp-4); font-size:var(--fs-14); display:flex; gap:var(--sp-2); align-items:flex-start; }

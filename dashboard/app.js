@@ -39,6 +39,7 @@
     check: '<path d="M20 6 9 17l-5-5"/>',
     info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
     eye: '<path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"/><circle cx="12" cy="12" r="3"/>',
+    more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
     layout: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/>'
   };
   function ic(n) { return '<svg viewBox="0 0 24 24" aria-hidden="true" stroke-linecap="round" stroke-linejoin="round">' + (IC[n] || '') + '</svg>'; }
@@ -143,7 +144,10 @@
   var ordersFilter = 'semua', ordersQuery = '', catQuery = '', ordersIds = null; // ordersIds: daftar id terpilih dari tautan Beranda
 
   // ---------- routing ----------
-  function route() { var h = (location.hash || '#/beranda').replace(/^#\/?/, ''); return h.split('/').map(decodeURIComponent); }
+  function route() { var h = (location.hash || '#/beranda').replace(/^#\/?/, '').split('?')[0]; return h.split('/').map(decodeURIComponent); }
+  function hashQuery() { var q = {}, i = (location.hash || '').indexOf('?'); if (i < 0) return q; location.hash.slice(i + 1).split('&').forEach(function (kv) { var a = kv.split('='); if (a[0]) q[decodeURIComponent(a[0])] = decodeURIComponent(a[1] || ''); }); return q; }
+  function readHashFilter() { var r = route(); if (r[0] !== 'pesanan' || r[1]) return; var q = hashQuery(); if (!q.f) return; if (FILTER_KEYS.indexOf(q.f) >= 0) { ordersFilter = q.f; ordersGroup = (q.f === 'tindakan' && Object.prototype.hasOwnProperty.call(GROUP_LABEL, q.g)) ? q.g : ''; } }
+  function syncHashFilter() { var r = route(); if (r[0] !== 'pesanan' || r[1]) return; var want = '#/pesanan' + (ordersFilter !== 'semua' ? '?f=' + encodeURIComponent(ordersFilter) + (ordersGroup ? '&g=' + encodeURIComponent(ordersGroup) : '') : ''); if (location.hash !== want) { try { history.replaceState(null, '', want); } catch (e) { /* abaikan */ } } }
   function go(p) { location.hash = '#/' + p; }
 
   var NAV = [['beranda', 'Beranda', 'home'], ['pesanan', 'Pesanan', 'list'], ['po', 'Daftar PO', 'send'], ['distributor', 'Distributor', 'store'],
@@ -155,12 +159,48 @@
     return { orders: a, po: p };
   }
   function renderSide(sec) {
-    var c = counts();
-    $('#side').innerHTML = '<div class="brand"><img class="logo-full" src="../assets/logo/logo.svg" alt="DavidStore" height="32"><img class="logo-mark" src="../assets/logo/mark.svg" alt="DavidStore" height="32"><small>Dashboard David</small></div><div class="nav">' +
+    var c = counts(), oldNav = $('#side .nav'), sl = oldNav ? oldNav.scrollLeft : 0; // nav digeser Kevin: jangan kembali ke awal
+    $('#side').innerHTML = '<div class="brand"><img class="logo-full" src="../assets/logo/logo.svg" alt="DavidStore" height="32"><img class="logo-mark" src="../assets/logo/mark.svg" alt="DavidStore" height="32"><small>Dashboard David</small><span class="hdr-sync">' + syncBadge() + '</span></div><div class="nav">' +
       NAV.map(function (n) {
         var k = c[n[0] === 'pesanan' ? 'orders' : n[0] === 'po' ? 'po' : ''];
         return '<a href="#/' + n[0] + '"' + (n[0] === sec ? ' aria-current="page"' : '') + '>' + ic(n[2]) + '<span>' + n[1] + '</span>' + (k ? '<span class="cnt" aria-label="' + k + ' perlu tindakan">' + k + '</span>' : '') + '</a>';
       }).join('') + '</div><div class="foot">' + (DS.syncStatus && DS.syncStatus().mode === 'sheet' ? '<p>Data tersimpan di Google Sheet.</p>' : '<p>Pesanan dan PO tersimpan di browser ini saja.</p><button class="btn sec sm" data-act="clear-local">Hapus data lokal browser ini</button>') + '</div>';
+    updateTabbar(sec, c);
+    var nav = $('#side .nav'); if (!nav) return;
+    nav.scrollLeft = sl;
+    var cur = $('a[aria-current="page"]', nav); // pastikan item aktif terlihat, tanpa lompat bila sudah terlihat
+    if (cur && nav.scrollWidth > nav.clientWidth) { var l = cur.offsetLeft - nav.offsetLeft, rgt = l + cur.offsetWidth; if (l < nav.scrollLeft) nav.scrollLeft = l - 8; else if (rgt > nav.scrollLeft + nav.clientWidth) nav.scrollLeft = rgt - nav.clientWidth + 8; }
+  }
+
+
+  // ---------- bar bawah (HP < 640px): dibuat sekali, sesudahnya hanya kelas aktif & lencana yang diubah ----------
+  var TABS = [['beranda', 'Beranda', 'home'], ['pesanan', 'Pesanan', 'list'], ['po', 'Daftar PO', 'send'], ['katalog', 'Katalog', 'tag'], ['more', 'Lainnya', 'more']];
+  var MORE = [['distributor', 'Distributor', 'store'], ['brand', 'Brand', 'eye'], ['laporan', 'Laporan', 'chart'], ['pengaturan', 'Pengaturan', 'gear']];
+  function closeMore() { var sh = $('#more-sheet'); if (!sh || sh.hidden) return; sh.hidden = true; var b = $('#tabbar [data-tab="more"]'); if (b) { b.setAttribute('aria-expanded', 'false'); b.focus(); } }
+  function initTabbar() {
+    var tb = $('#tabbar'); if (!tb || tb.firstChild) return;
+    tb.innerHTML = TABS.map(function (t) {
+      var inner = ic(t[2]) + '<span class="tl">' + t[1] + '</span><span class="cnt" hidden></span>';
+      return t[0] === 'more' ? '<button type="button" data-tab="more" aria-haspopup="dialog" aria-expanded="false">' + inner + '</button>' : '<a href="#/' + t[0] + '" data-tab="' + t[0] + '">' + inner + '</a>';
+    }).join('') + '<div class="more-sheet" id="more-sheet" hidden><div class="more-back" data-more="close"></div><div class="more-panel" role="dialog" aria-label="Menu lainnya">' +
+      MORE.map(function (m) { return '<a href="#/' + m[0] + '" data-more-go="' + m[0] + '">' + ic(m[2]) + '<span>' + m[1] + '</span></a>'; }).join('') + '</div></div>';
+    tb.addEventListener('click', function (e) {
+      if (e.target.closest('[data-tab="more"]')) { var sh = $('#more-sheet'), open = sh.hidden; sh.hidden = !open; $('#tabbar [data-tab="more"]').setAttribute('aria-expanded', String(open)); if (open) { var f = $('#more-sheet a'); if (f) f.focus(); } return; }
+      if (e.target.closest('[data-more="close"]')) { closeMore(); return; }
+      if (e.target.closest('#more-sheet a')) { $('#more-sheet').hidden = true; $('#tabbar [data-tab="more"]').setAttribute('aria-expanded', 'false'); }
+    });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeMore(); });
+  }
+  function updateTabbar(sec, c) {
+    initTabbar();
+    var inMore = MORE.some(function (m) { return m[0] === sec; });
+    $$('#tabbar [data-tab]').forEach(function (el) {
+      var k = el.getAttribute('data-tab'), on = k === 'more' ? inMore : k === sec;
+      if (on) el.setAttribute('aria-current', 'page'); else el.removeAttribute('aria-current');
+      var n = k === 'pesanan' ? c.orders : k === 'po' ? c.po : 0, b = $('.cnt', el);
+      if (b) { b.hidden = !n; b.textContent = n || ''; if (n) b.setAttribute('aria-label', n + ' perlu tindakan'); }
+    });
+    $$('#more-sheet a').forEach(function (a) { if (a.getAttribute('data-more-go') === sec) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
   }
 
   function render() {
@@ -361,17 +401,19 @@
   }
 
   // ---------- Daftar pesanan ----------
-  var FILTERS = [['semua', 'Semua'], ['tindakan', 'Perlu tindakan'], ['placed', 'Baru'], ['sourcing', 'Menunggu distributor'], ['quoted', 'Menunggu bayar'], ['paid', 'Lunas'],
-    ['fulfilling', 'Diproses'], ['received', 'Siap kirim'], ['shipped', 'Dikirim'], ['completed', 'Selesai'], ['cancelled', 'Batal / kedaluwarsa']];
+  var FILTERS = [['tindakan', 'Perlu tindakan'], ['berjalan', 'Berjalan'], ['completed', 'Selesai'], ['cancelled', 'Batal'], ['semua', 'Semua']];
+  var ACTIVE_ST = ['placed', 'sourcing', 'quoted', 'paid', 'fulfilling', 'received', 'shipped'];
+  var DETAIL_ST = ['placed', 'sourcing', 'quoted', 'paid', 'fulfilling', 'received', 'shipped', 'completed', 'cancelled', 'expired'];
+  var FILTER_KEYS = ['semua', 'tindakan', 'berjalan', 'cancelled'].concat(DETAIL_ST);
   function pgOrders() {
     var d = getData(), q = ordersQuery.trim().toLowerCase();
-    var list = d.orders.map(function (o) { return { o: o, a: L.actionFor(o, d.pos) }; }).filter(function (x) {
-      var s = x.o.status;
+    var acts = {}; d.orders.forEach(function (o) { acts[o.id] = L.actionFor(o, d.pos); });
+    function isAct(o) { var a = acts[o.id]; return !!(a && a.kind === 'action'); }
+    function match(o, k) { var s = o.status; return k === 'semua' ? true : k === 'tindakan' ? isAct(o) : k === 'berjalan' ? ACTIVE_ST.indexOf(s) >= 0 : k === 'cancelled' ? (s === 'cancelled' || s === 'expired') : s === k; }
+    var list = d.orders.map(function (o) { return { o: o, a: acts[o.id] }; }).filter(function (x) {
       if (ordersIds && ordersIds.indexOf(x.o.id) < 0) return false;
-      if (ordersFilter === 'tindakan' && !(x.a && x.a.kind === 'action')) return false;
+      if (!match(x.o, ordersFilter)) return false;
       if (ordersFilter === 'tindakan' && ordersGroup && x.a.group !== ordersGroup) return false;
-      if (ordersFilter === 'cancelled' && s !== 'cancelled' && s !== 'expired') return false;
-      if (['semua', 'tindakan', 'cancelled'].indexOf(ordersFilter) < 0 && s !== ordersFilter) return false;
       if (q && (x.o.id + ' ' + x.o.customer.name + ' ' + x.o.customer.wa).toLowerCase().indexOf(q) < 0) return false;
       return true;
     });
@@ -380,17 +422,26 @@
       if (xa !== ya) return xa - ya;
       return xa === 0 ? x.a.since - y.a.since : L.ms(y.o.created_at) - L.ms(x.o.created_at);
     });
-    function cnt(k) { return d.orders.filter(function (o) { return k === 'semua' ? true : k === 'tindakan' ? (function () { var a = L.actionFor(o, d.pos); return a && a.kind === 'action'; })() : k === 'cancelled' ? (o.status === 'cancelled' || o.status === 'expired') : o.status === k; }).length; }
+    function cnt(k) { return d.orders.filter(function (o) { return match(o, k); }).length; }
+    var isDetail = DETAIL_ST.indexOf(ordersFilter) >= 0;
+    syncHashFilter();
+    function card(x) {
+      var o = x.o, t = L.totals(o), est = o.items.reduce(function (s, i) { return s + i.est_price * i.qty; }, 0), act = x.a && x.a.kind === 'action';
+      return '<div class="ocard click' + (o.status === 'placed' ? ' newrow' : '') + '" data-act="open-order" data-id="' + esc(o.id) + '"><div class="oc-top"><a class="mono" href="#/pesanan/' + esc(o.id) + '">' + esc(o.id) + '</a><span class="muted small">' + age(o.created_at) + ' lalu</span></div>' +
+        '<div class="oc-name">' + esc(custName(o)) + '</div><div class="oc-sum"><b class="num">Rp ' + (t.jual ? num(t.total) : num(est)) + '</b>' + (t.jual ? '' : '<span class="muted small">estimasi</span>') + '<span class="muted small">' + o.items.length + ' item</span></div>' +
+        '<div>' + badge(OST, o.status, o.status === 'sourcing' && x.a && x.a.since ? age(x.a.since) : '') + '</div>' + (act ? '<div class="oc-act"><b>' + esc(x.a.text) + '</b></div>' : '') + (o.status === 'quoted' && o.payment && o.payment.status === 'pending_verification' ? proofSlot(o, true) : '') + '</div>';
+    }
     return pageHead('Pesanan') +
-      '<div class="tabs" role="group" aria-label="Filter status">' + FILTERS.map(function (f) { return '<button class="tab" data-act="filter" data-v="' + f[0] + '" aria-pressed="' + (ordersFilter === f[0]) + '">' + f[1] + ' (' + cnt(f[0]) + ')</button>'; }).join('') + '</div>' +
+      '<div class="tabs tabs--one" role="group" aria-label="Filter status">' + FILTERS.map(function (f) { return '<button class="tab" data-act="filter" data-v="' + f[0] + '" aria-pressed="' + (ordersFilter === f[0]) + '">' + f[1] + ' (' + cnt(f[0]) + ')</button>'; }).join('') + '</div>' +
+      '<div class="field" style="max-width:480px"><label class="f" for="st">Status detail</label><select id="st" class="input" data-act="filter-sel"><option value="semua"' + (isDetail ? '' : ' selected') + '>Semua status</option>' + DETAIL_ST.map(function (k) { return '<option value="' + k + '"' + (ordersFilter === k ? ' selected' : '') + '>' + esc(OST[k][0]) + ' (' + cnt(k) + ')</option>'; }).join('') + '</select></div>' +
       (ordersFilter === 'tindakan' && ordersGroup ? '<div class="note info">' + ic('info') + '<div>Disaring: <b>' + GROUP_LABEL[ordersGroup] + '</b> (' + list.length + ' dari ' + cnt('tindakan') + ' pesanan yang perlu tindakan).</div><button class="btn text sm" data-act="clear-group" style="margin-left:auto">Tampilkan semua</button></div>' : '') +
       '<div class="field" style="max-width:480px"><label class="f" for="q">Cari</label><input id="q" class="input" placeholder="Nama / no. HP / no. order" value="' + esc(ordersQuery) + '" data-input="orders-q"></div>' +
-      (list.length ? '<div class="tablewrap"><table><thead><tr><th>No. Order</th><th class="hide-md">Masuk</th><th>Customer</th><th class="num hide-md">Item</th><th class="num">Total (Rp)</th><th>Status</th><th></th></tr></thead><tbody>' +
+      (list.length ? '<div class="ocards">' + list.map(card).join('') + '</div><div class="tablewrap otable"><table><thead><tr><th>No. Order</th><th class="hide-md">Masuk</th><th>Customer</th><th class="num hide-md">Item</th><th class="num">Total (Rp)</th><th>Status</th><th></th></tr></thead><tbody>' +
         list.map(function (x) {
           var o = x.o, t = L.totals(o), est = o.items.reduce(function (s, i) { return s + i.est_price * i.qty; }, 0);
-          var isAct = x.a && x.a.kind === 'action';
+          var isA = x.a && x.a.kind === 'action';
           var extra = o.status === 'sourcing' && x.a && x.a.since ? age(x.a.since) : '';
-          return '<tr class="click' + (o.status === 'placed' ? ' newrow' : '') + '" data-act="open-order" data-id="' + esc(o.id) + '"><td><a class="mono" href="#/pesanan/' + esc(o.id) + '">' + esc(o.id) + '</a></td><td class="hide-md">' + fmtDT(o.created_at) + '</td><td>' + esc(custName(o)) + '</td><td class="num hide-md">' + o.items.length + '</td><td class="num">' + (t.jual ? num(t.total) : num(est) + '<span class="sub">estimasi</span>') + '</td><td>' + badge(OST, o.status, extra) + (isAct ? '<span class="sub"><b>' + esc(x.a.text) + '</b></span>' : '') + (o.status === 'quoted' && o.payment && o.payment.status === 'pending_verification' ? proofSlot(o, true) : '') + '</td><td><a class="btn text" href="#/pesanan/' + esc(o.id) + '">Buka</a></td></tr>';
+          return '<tr class="click' + (o.status === 'placed' ? ' newrow' : '') + '" data-act="open-order" data-id="' + esc(o.id) + '"><td><a class="mono" href="#/pesanan/' + esc(o.id) + '">' + esc(o.id) + '</a></td><td class="hide-md">' + fmtDT(o.created_at) + '</td><td>' + esc(custName(o)) + '</td><td class="num hide-md">' + o.items.length + '</td><td class="num">' + (t.jual ? num(t.total) : num(est) + '<span class="sub">estimasi</span>') + '</td><td>' + badge(OST, o.status, extra) + (isA ? '<span class="sub"><b>' + esc(x.a.text) + '</b></span>' : '') + (o.status === 'quoted' && o.payment && o.payment.status === 'pending_verification' ? proofSlot(o, true) : '') + '</td><td><a class="btn text" href="#/pesanan/' + esc(o.id) + '">Buka</a></td></tr>';
         }).join('') + '</tbody></table></div>' : '<div class="card calm">' + ic('inbox') + '<span>Tidak ada pesanan yang cocok dengan filter ini.</span><button class="btn sec sm" data-act="filter" data-v="semua">Hapus filter</button></div>');
   }
 
@@ -546,7 +597,10 @@
   function pgPos() {
     var d = getData();
     var list = d.pos.slice().sort(function (a, b) { return a.id < b.id ? 1 : -1; });
-    return pageHead('Daftar PO') + (list.length ? '<div class="tablewrap"><table><thead><tr><th>No. PO</th><th>Distributor</th><th>Pesanan</th><th class="num">Item</th><th>Dikirim</th><th>Status</th></tr></thead><tbody>' +
+    return pageHead('Daftar PO') + (list.length ? '<div class="ocards">' + list.map(function (p) {
+      var late = p.status === 'sent' && ageHrs(p.sent_at) > 24, n = p.items.filter(function (x) { return !x.superseded; }).length;
+      return '<div class="ocard click" data-act="open-po" data-id="' + esc(p.id) + '"><div class="oc-top"><a class="mono" href="#/po/' + esc(p.id) + '">' + esc(p.id) + '</a><span class="muted small">' + (p.sent_at ? age(p.sent_at) + ' lalu' : 'belum dikirim') + '</span></div><div class="oc-name">' + esc(DS.distributorName(p.distributor_id)) + '</div><div class="oc-sum"><span class="mono small">' + esc(p.order_id) + '</span><span class="muted small">' + n + ' item</span></div><div>' + badge(PST, p.status, late ? age(p.sent_at) : '') + '</div></div>';
+    }).join('') + '</div><div class="tablewrap otable"><table><thead><tr><th>No. PO</th><th>Distributor</th><th>Pesanan</th><th class="num">Item</th><th>Dikirim</th><th>Status</th></tr></thead><tbody>' +
       list.map(function (p) {
         var late = p.status === 'sent' && ageHrs(p.sent_at) > 24;
         return '<tr class="click" data-act="open-po" data-id="' + esc(p.id) + '"><td><a class="mono" href="#/po/' + esc(p.id) + '">' + esc(p.id) + '</a></td><td>' + esc(DS.distributorName(p.distributor_id)) + '</td><td><span class="mono">' + esc(p.order_id) + '</span></td><td class="num">' + p.items.filter(function (x) { return !x.superseded; }).length + '</td><td>' + (p.sent_at ? fmtDT(p.sent_at) : '—') + '</td><td>' + badge(PST, p.status, late ? age(p.sent_at) : '') + '</td></tr>';
@@ -941,6 +995,7 @@
   // ---------- event delegasi ----------
   var ACT = {
     'filter': function (el) { ordersFilter = el.getAttribute('data-v'); ordersGroup = ''; ordersIds = null; render(); },
+    'filter-sel': function (el) { ordersFilter = el.value; ordersGroup = ''; ordersIds = null; render(); },
     'orders-ids': function (el) { ordersIds = (el.getAttribute('data-ids') || '').split(',').filter(Boolean); ordersFilter = 'semua'; ordersGroup = ''; },
     'open-group': function (el) { ordersIds = null; ordersFilter = 'tindakan'; ordersGroup = el.getAttribute('data-g') || ''; },
     'clear-group': function () { ordersGroup = ''; render(); },
@@ -1068,14 +1123,15 @@
     var mi = $('[data-q="mval"][data-line="' + ln + '"]'); mi.value = t === 'rp' ? num(q.value) : String(q.value).replace('.', ',');
     qCalc();
   });
-  window.addEventListener('hashchange', function () { render(); window.scrollTo(0, 0); });
+  window.addEventListener('hashchange', function () { readHashFilter(); render(); window.scrollTo(0, 0); });
 
-  function boot() { render(); }
+  function boot() { readHashFilter(); render(); }
   function softRender() { // data/sumber berubah: jangan merusak isian yang sedang diketik atau dialog yang terbuka
     var a = document.activeElement, typing = a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && $('#main').contains(a);
     if (modalStack.length || typing) { renderSide(route()[0] || 'beranda'); return; }
     render();
   }
+  readHashFilter(); // sebelum render pertama apa pun (termasuk dari peristiwa data/sync)
   window.addEventListener('ds:data', softRender);
   window.addEventListener('ds:sync', softRender);
   window.addEventListener('ds:stale', function (e) { toast((e.detail && e.detail.message) || 'Perubahan ditolak karena data sudah berubah di tempat lain.', 'err'); });
