@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<title>Pratinjau logo DavidStore</title>
+<link rel="icon" type="image/svg+xml" href="mark.svg">
+<style>
+  :root { --n-0:#FFFFFF; --n-50:#F7F6F3; --n-200:#E1E3E6; --n-600:#5B626B; --n-900:#1A1D21;
+          --brand-700:#1D4A7A; --brand-900:#0F2843; --brand-100:#CFDDEC; }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:24px; background:var(--n-50); color:var(--n-900); font:14px/1.4 "IBM Plex Sans", system-ui, sans-serif; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  h2 { font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--n-600); margin:0 0 8px; }
+  p.note { margin:0 0 20px; color:var(--n-600); }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .panel { padding:16px; border:1px solid var(--n-200); background:var(--n-0); }
+  .panel.dark { background:var(--brand-900); border-color:var(--brand-900); color:var(--brand-100); }
+  .panel.dark h2 { color:var(--brand-100); }
+  .row { display:flex; flex-wrap:wrap; align-items:flex-end; gap:20px; margin-bottom:16px; }
+  .grid > * { min-width:0; }
+  .row figure { margin:0; display:grid; gap:6px; justify-items:start; }
+  figcaption { font-size:12px; color:inherit; opacity:.75; font-variant-numeric:tabular-nums; }
+  /* simulasi header marketplace: tinggi 60px (--header-h) */
+  .hdr { height:60px; display:flex; align-items:center; padding:0 16px; border-bottom:1px solid var(--n-200); background:var(--n-0); margin-bottom:8px; }
+  .hdr.clear { background:var(--brand-900); border-color:transparent; }
+  .hdr .sp { margin-left:auto; display:flex; gap:8px; }
+  .hdr .sp i { width:24px; height:24px; border:2px solid currentColor; border-radius:4px; opacity:.35; }
+  .hdr.clear .sp i { color:#fff; }
+  /* simulasi sidebar dashboard: --surface putih, padding var(--sp-5) var(--sp-3) */
+  .side { width:260px; background:var(--n-0); border:1px solid var(--n-200); padding:20px 12px; }
+  .side .brand { padding:8px 12px 16px; }
+  .side .brand small { display:block; margin-top:6px; font-size:14px; color:var(--n-600); font-weight:500; }
+  .side .nav { display:grid; gap:4px; }
+  .side .nav span { display:block; height:52px; border-radius:6px; background:#EEEFF1; opacity:.6; }
+  .side .nav span:first-child { background:#E7EEF6; opacity:1; }
+  .tab { display:inline-flex; align-items:center; gap:8px; height:32px; padding:0 12px; background:#DEE1E6; border-radius:8px 8px 0 0; font:12px system-ui; color:#333; }
+  .tab.dk { background:#35363A; color:#E8EAED; }
+</style>
+</head>
+<body>
+<h1>Logo DavidStore — pratinjau</h1>
+<p class="note">Semua gambar memuat berkas SVG yang sama dengan yang akan dipasang (<code>logo.svg</code>, <code>logo-inverse.svg</code>, <code>mark.svg</code>, <code>mark-inverse.svg</code>). Kotak abu-abu di header/sidebar hanya penanda posisi, bukan elemen rancangan.</p>
+
+<div class="grid">
+  <section class="panel">
+    <h2>Simbol — latar terang</h2>
+    <div class="row">
+      <figure><img src="mark.svg" width="16" height="16" alt="DavidStore"><figcaption>16</figcaption></figure>
+      <figure><img src="mark.svg" width="32" height="32" alt="DavidStore"><figcaption>32</figcaption></figure>
+      <figure><img src="mark.svg" width="48" height="48" alt="DavidStore"><figcaption>48</figcaption></figure>
+      <figure><img src="mark.svg" width="96" height="96" alt="DavidStore"><figcaption>96</figcaption></figure>
+    </div>
+    <div class="row">
+      <span class="tab"><img src="mark.svg" width="16" height="16" alt="">DavidStore — Peralatan tenis meja</span>
+    </div>
+    <h2>Lockup — latar terang</h2>
+    <div class="row">
+      <figure><img src="logo.svg" height="28" alt="DavidStore"><figcaption>tinggi 28</figcaption></figure>
+      <figure><img src="logo.svg" height="32" alt="DavidStore"><figcaption>tinggi 32</figcaption></figure>
+      <figure><img src="logo.svg" height="48" alt="DavidStore"><figcaption>tinggi 48</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="panel dark">
+    <h2>Simbol — latar gelap (--brand-900)</h2>
+    <div class="row">
+      <figure><img src="mark-inverse.svg" width="16" height="16" alt="DavidStore"><figcaption>16</figcaption></figure>
+      <figure><img src="mark-inverse.svg" width="32" height="32" alt="DavidStore"><figcaption>32</figcaption></figure>
+      <figure><img src="mark-inverse.svg" width="48" height="48" alt="DavidStore"><figcaption>48</figcaption></figure>
+      <figure><img src="mark-inverse.svg" width="96" height="96" alt="DavidStore"><figcaption>96</figcaption></figure>
+    </div>
+    <div class="row">
+      <span class="tab dk"><img src="mark.svg" width="16" height="16" alt="">DavidStore — tab mode gelap</span>
+    </div>
+    <h2>Lockup — latar gelap</h2>
+    <div class="row">
+      <figure><img src="logo-inverse.svg" height="28" alt="DavidStore"><figcaption>tinggi 28</figcaption></figure>
+      <figure><img src="logo-inverse.svg" height="32" alt="DavidStore"><figcaption>tinggi 32</figcaption></figure>
+      <figure><img src="logo-inverse.svg" height="48" alt="DavidStore"><figcaption>tinggi 48</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Header marketplace, HP 360 px — setelah scroll (putih) dan di atas hero (gelap)</h2>
+    <div style="width:360px">
+      <div class="hdr"><img src="logo.svg" height="28" alt="DavidStore"><span class="sp"><i></i><i></i></span></div>
+      <div class="hdr clear"><img src="logo-inverse.svg" height="28" alt="DavidStore"><span class="sp"><i></i><i></i></span></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Sidebar dashboard (latar putih, --surface)</h2>
+    <div class="side">
+      <div class="brand"><img src="logo.svg" height="32" alt="DavidStore"><small>Dashboard David</small></div>
+      <div class="nav"><span></span><span></span><span></span></div>
+    </div>
+  </section>
+</div>
+</body>
+</html>
