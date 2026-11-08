@@ -559,7 +559,11 @@
   function statusLink(order) {
     var base = 'https://davidstore.example/marketplace/index.html';
     try { if (typeof location !== 'undefined' && /^https?:$/.test(location.protocol)) base = new URL('../marketplace/index.html', location.href).href; } catch (e) {}
-    return base + '#/lacak?id=' + encodeURIComponent(order.id) + '&wa=' + encodeURIComponent((order.customer && order.customer.wa) || '') + (order.track_key ? '&k=' + encodeURIComponent(order.track_key) : '');
+    if (!order.track_key) return ''; // tanpa kunci tautan tidak bisa dibuka customer: jangan pernah membentuknya
+    return base + '#/lacak?id=' + encodeURIComponent(order.id) + '&wa=' + encodeURIComponent((order.customer && order.customer.wa) || '') + '&k=' + encodeURIComponent(order.track_key);
+  }
+  function trackText(order) {
+    return 'Halo ' + order.customer.name.replace(/ \(CONTOH\)/, '') + ', ini tautan untuk memantau pesanan ' + order.id + ' dari DavidStore (status, bayar, unggah bukti):\n' + statusLink(order);
   }
   function quoteText(order) {
     var t = totals(order), s = DS.getSettings();
@@ -571,13 +575,13 @@
     if (gone.length) lines.push('', 'Tidak tersedia: ' + gone.map(function (g) { return g.name; }).join(', '));
     lines.push('', 'Ongkir: ' + DS.formatRupiah(t.ongkir), 'Total: ' + DS.formatRupiah(t.total));
     lines.push('', 'Transfer ke ' + s.bank.bank + ' ' + s.bank.no + ' a.n. ' + s.bank.name, 'Batas bayar: ' + (order.pay_deadline || '(diisi saat dikirim)'));
-    lines.push('', 'Lihat & unggah bukti: ' + statusLink(order));
+    if (statusLink(order)) lines.push('', 'Lihat & unggah bukti: ' + statusLink(order));
     return lines.join('\n');
   }
   function shipText(order) {
     if (isSelf(order.shipment)) {
       var nt = String(order.shipment.note || '').trim();
-      return 'Halo ' + order.customer.name.replace(/ \(CONTOH\)/, '') + ', pesanan ' + order.id + ' sedang diantar langsung oleh David.' + (nt ? ' Perkiraan tiba: ' + nt + '.' : '') + '\nLacak pesanan: ' + statusLink(order) + '\nTerima kasih sudah belanja di DavidStore.';
+      return 'Halo ' + order.customer.name.replace(/ \(CONTOH\)/, '') + ', pesanan ' + order.id + ' sedang diantar langsung oleh David.' + (nt ? ' Perkiraan tiba: ' + nt + '.' : '') + (statusLink(order) ? '\nLacak pesanan: ' + statusLink(order) : '') + '\nTerima kasih sudah belanja di DavidStore.';
     }
     return 'Halo ' + order.customer.name.replace(/ \(CONTOH\)/, '') + ', pesanan ' + order.id + ' sudah dikirim via ' + order.shipment.courier + ', resi ' + order.shipment.resi + '. Terima kasih sudah belanja di DavidStore.';
   }
@@ -921,7 +925,7 @@
     A: A, unitsOf: unitsOf, entriesFor: entriesFor, unitState: unitState, eligibleUnits: eligibleUnits, itemPoState: itemPoState,
     categoryOf: categoryOf, assemblyFee: assemblyFee, priceFrom: priceFrom, marginFrom: marginFrom, roundUp1000: roundUp1000,
     costOf: costOf, offersOf: offersOf, totals: totals, quoteReady: quoteReady, isBillable: isBillable,
-    inconsistency: inconsistency, waLink: waLink, poText: poText, poConfirmText: poConfirmText, quoteText: quoteText, shipText: shipText, isSelfShip: isSelf, statusLink: statusLink,
+    inconsistency: inconsistency, waLink: waLink, poText: poText, poConfirmText: poConfirmText, quoteText: quoteText, shipText: shipText, isSelfShip: isSelf, statusLink: statusLink, trackText: trackText,
     actionFor: actionFor, unitKey: unitKey, ms: ms, dist: dist, load: load
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = root.DSLogic;

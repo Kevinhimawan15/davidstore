@@ -548,6 +548,7 @@
       pageHead('<span class="mono">' + esc(o.id) + '</span> <button class="btn text sm" data-act="copy" data-v="' + esc(o.id) + '" aria-label="Salin nomor order">' + ic('copy') + 'Salin</button>', badge(OST, st) + (o.sample ? '<span class="sample-tag" data-sample>CONTOH</span>' : ''),
         esc(custName(o)) + ' · ' + esc(o.customer.wa) + ' · <a href="' + L.waLink(o.customer.wa, 'Halo, soal pesanan ' + o.id) + '" target="_blank" rel="noopener">Hubungi via WhatsApp</a>') +
       '<section class="card"><h2>Perkembangan</h2>' + stepper(o) + '</section>' +
+      (['completed', 'cancelled', 'expired'].indexOf(st) < 0 && sheetMode() ? '<div class="row" style="margin:-8px 0 16px;gap:8px;flex-wrap:wrap"><button class="btn sec sm" data-act="copy-track" data-id="' + esc(o.id) + '">' + ic('copy') + 'Salin tautan Lacak</button><button class="btn sec sm" data-act="wa-track" data-id="' + esc(o.id) + '">' + ic('send') + 'Kirim tautan Lacak via WA</button></div>' : '') +
       '<section class="card"><h2>Langkah berikutnya</h2>' + warn + nextHtml + (L.CANCELLABLE.indexOf(st) >= 0 ? '<div class="row" style="margin-top:16px"><span class="spacer"></span><button class="btn danger sm" data-act="cancel" data-id="' + esc(id) + '">Batalkan pesanan</button></div>' : '') + '</section>' +
       '<section class="card"><h2>Item pesanan</h2><div class="tablewrap"><table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Harga est. (Rp)</th><th class="num">Harga final (Rp)</th><th>Status item</th><th>PO</th></tr></thead><tbody>' + rows +
       '<tr class="total"><td>' + (t.jual ? 'Total tagihan (barang + ongkir ' + num(t.ongkir) + ')' : 'Total estimasi') + '</td><td></td><td class="num">' + num(est) + '</td><td class="num">' + (t.jual ? num(t.total) : '—') + '</td><td></td><td></td></tr></tbody></table></div></section>' +
@@ -933,25 +934,35 @@
       note: 'Pesanan sudah lunas. Ini komitmen beli ke distributor.', textHtml: esc(text).replace(esc(s.address), '<b>' + esc(s.address) + '</b>'),
       onSent: function () { var r = A.confirmPo(poId); afterAction(r, poId + ' dikonfirmasi. Menunggu barang dari ' + dd.name + '.'); return r.ok; } });
   }
-  // pesanan lama tanpa kunci Lacak: minta server membuatnya (op admin), tarik ulang, lanjutkan. Mode lokal: lanjut tanpa kunci.
-  function withTrackKey(o, fn) {
-    if (o.track_key || !(DS.syncStatus && DS.syncStatus().mode === 'sheet') || !DS.sync.ensureTrackKey) { fn(o); return; }
+  // Tautan Lacak selalu butuh kunci. Pesanan lama tanpa kunci: minta server membuatnya (op admin), tarik ulang, lanjutkan.
+  // Gagal di mode sheet: peringatan, fn TIDAK dipanggil (tidak ada tautan tanpa kunci yang terkirim diam-diam).
+  var TK_FAIL = 'Tautan Lacak belum bisa dibuat — coba lagi.';
+  var NO_TK_NOTE = 'Tanpa tautan Lacak (Dashboard belum tersambung ke Google Sheet).';
+  function sheetMode() { return !!(DS.syncStatus && DS.syncStatus().mode === 'sheet' && DS.sync.ensureTrackKey); }
+  // optional = true: di mode lokal lanjut tanpa kunci (teks WA membuang baris tautan); mode sheet tetap wajib.
+  function withTrackKey(o, fn, optional) {
+    if (!o) return;
+    if (o.track_key) { fn(o); return; }
+    if (!sheetMode()) { if (optional) { fn(o); return; } toast(TK_FAIL + ' (Dashboard belum terhubung ke Sheet.)', 'err'); return; }
     DS.sync.ensureTrackKey(o.id).then(function (r) {
-      if (!r.ok) { toast('Kunci tautan Lacak belum bisa dibuat (' + (r.error || 'gagal') + '). Tautan tanpa kunci tidak akan bisa dibuka customer.', 'err'); fn(o); return; }
-      DS.sync.pull().then(function () { fn(orderById(o.id) || o); });
+      if (!r || !r.ok || !r.track_key) { toast(TK_FAIL + ' (' + ((r && r.error) || 'gagal') + ')', 'err'); return; }
+      var done = function () { var o2 = orderById(o.id) || o; if (!o2.track_key) { o2 = Object.assign({}, o2, { track_key: r.track_key }); } fn(o2); };
+      DS.sync.pull().then(done, done);
     });
   }
   function dlgQuoteSend() {
-    var o0 = orderById(quote.orderId); if (o0 && !o0.track_key && DS.syncStatus && DS.syncStatus().mode === 'sheet' && !dlgQuoteSend._tried) { dlgQuoteSend._tried = true; withTrackKey(o0, function () { dlgQuoteSend(); }); return; }
-    dlgQuoteSend._tried = false;
+    var o0 = orderById(quote.orderId); if (!o0) return;
+    withTrackKey(o0, function (ok) { dlgQuoteSend2(ok.track_key); }, true);
+  }
+  function dlgQuoteSend2(tk) {
     var c = qCalc(), o = orderById(quote.orderId), s = DS.getSettings();
-    var tmp = JSON.parse(JSON.stringify(o));
+    var tmp = JSON.parse(JSON.stringify(o)); if (tk) tmp.track_key = tk; else delete tmp.track_key;
     tmp.items.forEach(function (it) { var q = quote.lines[it.line_id]; if (q) { it.final_price = q.price; it.cost_price = q.cost; } });
     tmp.shipping_fee = quote.shipping; tmp.pay_deadline = DS.isoWIB(Date.now() + quote.hours * HR);
     var text = L.quoteText(tmp).replace(tmp.pay_deadline, fmtDT(tmp.pay_deadline) + ' WIB');
     var warn = c.anyLoss ? note('bad', 'alert', '<b>Ada item dijual tanpa untung / rugi.</b> Tetap boleh dikirim; dicatat di riwayat.') : '';
     waModal({ title: 'Kirim harga final ke ' + custName(o).replace(' (CONTOH)', '') + '?', text: text, url: L.waLink(o.customer.wa, text), sentLabel: 'Sudah terkirim',
-      note: warn + 'Total ditagih ' + rp(c.jual + quote.shipping) + ', batas bayar ' + quote.hours + ' jam dari sekarang.', textHtml: esc(text),
+      note: warn + (tk ? '' : note('info', 'alert', NO_TK_NOTE)) + 'Total ditagih ' + rp(c.jual + quote.shipping) + ', batas bayar ' + quote.hours + ' jam dari sekarang.', textHtml: esc(text),
       onSent: function () {
         var lines = Object.keys(quote.lines).map(function (k) { var q = quote.lines[k]; return { line_id: k, pick: q.pick, margin_type: q.type, margin_value: q.value, final_price: q.price }; });
         var r = A.sendQuote(quote.orderId, { lines: lines, shipping: quote.shipping, hours: quote.hours });
@@ -983,7 +994,9 @@
     var self = $('[data-shm="self"]', ov).getAttribute('aria-pressed') === 'true';
     var r = A.ship(id, { method: self ? 'self' : 'courier', courier: $('#sh-c', ov).value, resi: $('#sh-r', ov).value, note: $('#sh-n', ov).value, actual_fee: $('#sh-f', ov).value ? digits($('#sh-f', ov).value) : '' });
     if (!r.ok) { fieldErr(ov, r.error); return false; }
-    var o = orderById(id); if (wa) waOpen(L.waLink(o.customer.wa, L.shipText(o)));
+    var o = orderById(id);
+    if (wa && L.isSelfShip(o.shipment)) withTrackKey(o, function (o2) { var t = L.shipText(o2); waModal({ title: 'Kirim info antar ke customer', text: t, url: L.waLink(o2.customer.wa, t), sentLabel: 'Sudah terkirim', textHtml: esc(t), note: (o2.track_key ? '' : note('info', 'alert', NO_TK_NOTE)), onSent: function () { toast('Dicatat: info antar dikirim ke customer.'); return true; } }); }, true);
+    else if (wa) waOpen(L.waLink(o.customer.wa, L.shipText(o)));
     afterAction(r, (self ? 'Pesanan ditandai diantar David.' : 'Pesanan dikirim. Resi dicatat.'));
   }
   function dlgCancel(id) {
@@ -1063,10 +1076,26 @@
     'extend': function (el) { afterAction(A.extendDeadline(el.getAttribute('data-id'), 24), 'Batas bayar diperpanjang 24 jam.'); },
     'pull': function (el) { var id = el.getAttribute('data-id'); openModal({ title: 'Tarik harga final?', body: '<p>Pesanan kembali ke "Menunggu balasan distributor" untuk dicek ulang. Customer akan melihat statusnya berubah.</p>', actions: [{ label: 'Batal', kind: 'sec' }, { label: 'Tarik harga final', fn: function () { afterAction(A.pullQuote(id), 'Harga final ditarik.'); } }] }); },
     'sim-proof': function (el) { afterAction(A.simulateProof(el.getAttribute('data-id')), 'Simulasi: bukti transfer masuk.'); },
-    'show-quote-wa': function (el) { withTrackKey(orderById(el.getAttribute('data-id')), function (o) { var text = L.quoteText(o); waModal({ title: 'Kirim ulang harga final', text: text, url: L.waLink(o.customer.wa, text), sentLabel: 'Sudah terkirim', textHtml: esc(text), onSent: function () { toast('Dicatat: harga final dikirim ulang.'); return true; } }); }); },
+    'show-quote-wa': function (el) { withTrackKey(orderById(el.getAttribute('data-id')), function (o) { var text = L.quoteText(o); waModal({ title: 'Kirim ulang harga final', text: text, url: L.waLink(o.customer.wa, text), sentLabel: 'Sudah terkirim', textHtml: esc(text), note: (o.track_key ? '' : note('info', 'alert', NO_TK_NOTE)), onSent: function () { toast('Dicatat: harga final dikirim ulang.'); return true; } }); }, true); },
     'assembly': function (el) { A.toggleAssembly(el.getAttribute('data-id'), el.getAttribute('data-line'), el.checked); },
     'ship': function (el) { dlgShip(el.getAttribute('data-id')); },
-    'ship-wa': function (el) { var o = orderById(el.getAttribute('data-id')), t = L.shipText(o); waModal({ title: 'Kirim resi ke customer', text: t, url: L.waLink(o.customer.wa, t), sentLabel: 'Sudah terkirim', textHtml: esc(t), onSent: function () { toast('Dicatat: resi dikirim ke customer.'); return true; } }); },
+    'ship-wa': function (el) { var o0 = orderById(el.getAttribute('data-id')); (L.isSelfShip(o0.shipment) ? withTrackKey : function (x, f) { f(x); })(o0, function (o) { var t = L.shipText(o); waModal({ title: 'Kirim resi ke customer', text: t, url: L.waLink(o.customer.wa, t), sentLabel: 'Sudah terkirim', textHtml: esc(t), note: (L.isSelfShip(o.shipment) && !o.track_key ? note('info', 'alert', NO_TK_NOTE) : ''), onSent: function () { toast('Dicatat: resi dikirim ke customer.'); return true; } }); }, true); },
+    'copy-track': function (el) {
+      var had = !!(orderById(el.getAttribute('data-id')) || {}).track_key;
+      withTrackKey(orderById(el.getAttribute('data-id')), function (o) {
+        var link = L.statusLink(o);
+        function modal() {
+          var ov = openModal({ title: 'Tautan Lacak ' + o.id, body: '<div class="field"><label class="f" for="tk-l">Tautan untuk customer</label><input id="tk-l" class="input mono" readonly value="' + esc(link) + '"></div>',
+            actions: [{ label: 'Tutup', kind: 'sec' },
+              { label: 'Salin', fn: function (ov) { var i = $('#tk-l', ov); i.focus(); i.select(); copyText(link); return false; } },
+              { label: 'Buka WhatsApp', fn: function () { var t = L.trackText(o); waOpen(L.waLink(o.customer.wa, t)); return false; } }] });
+          var i = $('#tk-l', ov); if (i) { i.focus(); i.select(); }
+        }
+        if (!had) { modal(); return; } // baru dibuat lewat jaringan: izin clipboard kemungkinan hilang, tampilkan modal
+        try { navigator.clipboard.writeText(link).then(function () { toast('Tautan Lacak disalin.'); }, modal); } catch (e) { modal(); }
+      });
+    },
+    'wa-track': function (el) { withTrackKey(orderById(el.getAttribute('data-id')), function (o) { var t = L.trackText(o); waModal({ title: 'Kirim tautan Lacak', text: t, url: L.waLink(o.customer.wa, t), sentLabel: 'Sudah terkirim', textHtml: esc(t), onSent: function () { toast('Dicatat: tautan Lacak dikirim.'); return true; } }); }); },
     'complete': function (el) { afterAction(A.complete(el.getAttribute('data-id')), 'Pesanan selesai.'); },
     'cancel': function (el) { dlgCancel(el.getAttribute('data-id')); },
     'refund-done': function (el) { afterAction(A.refundDone(el.getAttribute('data-id')), 'Refund ditandai sudah ditransfer.'); },

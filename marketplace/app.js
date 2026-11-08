@@ -1120,6 +1120,12 @@
     window.addEventListener('storage', onStorage);
     cleanup = function () { window.removeEventListener('storage', onStorage); };
 
+    if (qid && qwa && pub && !qk) { // tautan lama (dibuat sebelum kunci Lacak ada): jangan tampilkan data, arahkan minta tautan baru
+      var reqLink = davidLink('Halo David, saya minta tautan Lacak baru untuk pesanan ' + qid + '.');
+      $('#trk').innerHTML = '<div class="panel" style="max-width:520px"><div class="note note--warn">' + ico('info') + '<span>Tautan ini versi lama. Minta tautan baru ke David.</span></div>' +
+        (reqLink ? '<p style="margin-top:16px"><a class="btn" id="reqNew" target="_blank" rel="noopener" href="' + esc(reqLink) + '">' + ico('wa') + 'Minta tautan via WhatsApp</a></p>' : '') + '</div>';
+      return;
+    }
     if (qid && qwa) {
       $('#trk').innerHTML = '<p class="hint" role="status">Memuat pesanan…</p>';
       lookup(qid, qwa).then(function (res) { if (!app.isConnected) return; if (res.ok) { cur = res.order; showResult(); } else showForm(res.message || NF); });
