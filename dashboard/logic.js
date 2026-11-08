@@ -460,18 +460,28 @@
     save(d); return { ok: true };
   };
 
+  var SELF_LABEL = 'Diantar langsung oleh David';
+  function isSelf(sh) { return !!sh && (sh.method === 'self' || (!sh.method && !sh.resi && String(sh.courier || '').indexOf(SELF_LABEL) === 0)); }
   A.ship = function (orderId, f) {
     var d = load(), o = findOrder(d, orderId);
     if (!o || o.status !== 'received') return fail('Kirim hanya dari status Barang di David.');
-    if (!String(f.courier || '').trim()) return fail('Isi nama kurir.');
-    if (!String(f.resi || '').trim()) return fail('Isi nomor resi.');
+    var self = f.method === 'self';
+    var note = String(f.note || '').trim();
+    if (self) { if (note.length > 120) return fail('Perkiraan tiba / catatan maksimal 120 huruf.'); }
+    else {
+      if (!String(f.courier || '').trim()) return fail('Isi nama kurir.');
+      if (!String(f.resi || '').trim()) return fail('Isi nomor resi.');
+    }
     var need = o.items.filter(function (it) { return it.kind === 'rakitan' && isBillable(it); });
     for (var i = 0; i < need.length; i++) if (!(o.assembly && o.assembly[need[i].line_id])) return fail('Centang dulu bahwa bet rakitan sudah dirakit.');
-    o.shipment = { courier: f.courier.trim(), resi: f.resi.trim() };
+    // Code.gs hanya meneruskan courier & resi ke publik, jadi mode self dikodekan ke courier.
+    o.shipment = self
+      ? { method: 'self', courier: SELF_LABEL + (note ? ' · ' + note : ''), resi: '', note: note, shipped_at: nowIso() }
+      : { method: 'courier', courier: f.courier.trim(), resi: f.resi.trim(), note: '', shipped_at: nowIso() };
     if (f.actual_fee !== '' && f.actual_fee != null && !isNaN(Number(f.actual_fee))) o.shipment.actual_fee = Math.round(Number(f.actual_fee));
     o.items.forEach(function (it) { if (it.item_status === 'received') it.item_status = 'shipped'; });
     o.status = 'shipped';
-    addHist(o, 'Dikirim via ' + o.shipment.courier + ', resi ' + o.shipment.resi);
+    addHist(o, self ? o.shipment.courier : 'Dikirim via ' + o.shipment.courier + ', resi ' + o.shipment.resi);
     save(d); return { ok: true };
   };
 
@@ -565,6 +575,10 @@
     return lines.join('\n');
   }
   function shipText(order) {
+    if (isSelf(order.shipment)) {
+      var nt = String(order.shipment.note || '').trim();
+      return 'Halo ' + order.customer.name.replace(/ \(CONTOH\)/, '') + ', pesanan ' + order.id + ' sedang diantar langsung oleh David.' + (nt ? ' Perkiraan tiba: ' + nt + '.' : '') + '\nLacak pesanan: ' + statusLink(order) + '\nTerima kasih sudah belanja di DavidStore.';
+    }
     return 'Halo ' + order.customer.name.replace(/ \(CONTOH\)/, '') + ', pesanan ' + order.id + ' sudah dikirim via ' + order.shipment.courier + ', resi ' + order.shipment.resi + '. Terima kasih sudah belanja di DavidStore.';
   }
 
@@ -907,7 +921,7 @@
     A: A, unitsOf: unitsOf, entriesFor: entriesFor, unitState: unitState, eligibleUnits: eligibleUnits, itemPoState: itemPoState,
     categoryOf: categoryOf, assemblyFee: assemblyFee, priceFrom: priceFrom, marginFrom: marginFrom, roundUp1000: roundUp1000,
     costOf: costOf, offersOf: offersOf, totals: totals, quoteReady: quoteReady, isBillable: isBillable,
-    inconsistency: inconsistency, waLink: waLink, poText: poText, poConfirmText: poConfirmText, quoteText: quoteText, shipText: shipText, statusLink: statusLink,
+    inconsistency: inconsistency, waLink: waLink, poText: poText, poConfirmText: poConfirmText, quoteText: quoteText, shipText: shipText, isSelfShip: isSelf, statusLink: statusLink,
     actionFor: actionFor, unitKey: unitKey, ms: ms, dist: dist, load: load
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = root.DSLogic;

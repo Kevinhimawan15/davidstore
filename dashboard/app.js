@@ -472,7 +472,7 @@
       nextHtml += rak.map(function (i) { return '<label class="radiorow" style="min-height:56px"><input type="checkbox" data-act="assembly" data-id="' + esc(id) + '" data-line="' + i.line_id + '"' + (o.assembly && o.assembly[i.line_id] ? ' checked' : '') + '> Sudah dirakit: ' + esc(itemLabel(i)) + '</label>'; }).join('') +
         '<div class="row"><button class="btn" data-act="ship" data-id="' + esc(id) + '">' + ic('truck') + 'Tandai dikirim</button></div>';
     } else if (st === 'shipped') {
-      nextHtml += '<p>Kurir <b>' + esc(o.shipment.courier) + '</b>, resi <span class="mono">' + esc(o.shipment.resi) + '</span></p><div class="row"><button class="btn sec" data-act="ship-wa" data-id="' + esc(id) + '">Kirim resi via WA</button><button class="btn text" data-act="complete" data-id="' + esc(id) + '">Demo: tandai selesai (customer konfirmasi)</button></div>';
+      nextHtml += '<p>' + shipInfo(o) + '</p><div class="row"><button class="btn sec" data-act="ship-wa" data-id="' + esc(id) + '">' + (L.isSelfShip(o.shipment) ? 'Kabari customer via WA' : 'Kirim resi via WA') + '</button><button class="btn text" data-act="complete" data-id="' + esc(id) + '">Demo: tandai selesai (customer konfirmasi)</button></div>';
     } else if (st === 'cancelled' || st === 'expired') {
       nextHtml += '<p class="muted">' + (st === 'cancelled' ? 'Dibatalkan: ' + esc(o.cancel_reason || '') : 'Batas bayar lewat tanpa bukti.') + '</p>' +
         (o.refund ? note(o.refund.status === 'perlu_ditransfer' ? 'bad' : 'ok', 'wallet', '<b>Refund ' + rp(o.refund.amount) + ':</b> ' + (o.refund.status === 'perlu_ditransfer' ? 'perlu ditransfer ke customer.' : 'sudah ditransfer.')) + (o.refund.status === 'perlu_ditransfer' ? '<button class="btn" data-act="refund-done" data-id="' + esc(id) + '">Tandai refund sudah ditransfer</button>' : '') : '');
@@ -503,7 +503,7 @@
       '<section><h2>PO terkait</h2>' + (pos.length ? pos.map(function (p) { return poCard(p, o, false); }).join('') : '<div class="card calm">' + ic('file') + '<span>Belum ada PO untuk pesanan ini.</span></div>') + '</section>' +
       profitCard +
       '<div class="grid2"><section class="card"><h2>Customer & pengiriman</h2><div class="stack small"><div><b>' + esc(custName(o)) + '</b></div><div>' + esc(o.customer.address) + '</div>' + (o.customer.note ? '<div class="muted">Catatan: ' + esc(o.customer.note) + '</div>' : '') +
-      '<div>Pengiriman: ' + (o.shipment ? esc(o.shipment.courier) + ' · <span class="mono">' + esc(o.shipment.resi) + '</span>' : '<span class="muted">belum dikirim</span>') + '</div></div></section>' +
+      '<div>Pengiriman: ' + (o.shipment ? shipInfo(o) : '<span class="muted">belum dikirim</span>') + '</div></div></section>' +
       '<section class="card"><h2>Pembayaran</h2><div class="stack small"><div>Status: <b>' + ({ none: 'Belum ada bukti', pending_verification: 'Bukti menunggu verifikasi', verified: 'Terverifikasi', rejected: 'Bukti ditolak' }[o.payment.status] || o.payment.status) + '</b></div>' +
       (o.payment.proof_name ? '<div>Bukti: <span class="mono">' + esc(o.payment.proof_name) + '</span></div>' : '') + (o.payment.amount != null ? '<div>Nominal diklaim: ' + rp(o.payment.amount) + '</div>' : '') + '<div>Batas bayar: ' + fmtDT(o.pay_deadline) + '</div></div></section></div>' +
       '<section class="card" style="margin-top:20px"><h2>Riwayat</h2><div class="tablewrap"><table><thead><tr><th>Waktu</th><th>Status</th><th>Oleh</th><th>Catatan</th></tr></thead><tbody>' + hist + '</tbody></table></div></section>';
@@ -906,15 +906,31 @@
         return r.ok;
       } });
   }
+  function shipInfo(o) {
+    var sh = o.shipment; if (!sh) return '';
+    if (L.isSelfShip(sh)) return 'Metode: <b>Diantar David sendiri</b>' + (sh.note ? ', ' + esc(sh.note) : '');
+    return 'Metode: <b>Kurir</b> ' + esc(sh.courier) + ', resi <span class="mono">' + esc(sh.resi) + '</span>';
+  }
   function dlgShip(id) {
-    openModal({ title: 'Kirim pesanan ' + id + ' ke customer', body: '<div class="field"><label class="f" for="sh-c">Kurir</label><input id="sh-c" class="input" placeholder="Contoh: JNE, J&T, Gojek"></div><div class="field"><label class="f" for="sh-r">Nomor resi</label><input id="sh-r" class="input"></div><div class="field"><label class="f" for="sh-f">Ongkir aktual (opsional)</label><div class="rp"><input id="sh-f" class="input num" inputmode="numeric"></div></div>',
+    var ov = openModal({ title: 'Kirim pesanan ' + id + ' ke customer', body:
+      '<div class="field" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span class="f" id="sh-m-l" style="margin:0">Cara kirim</span><span class="seg" role="group" aria-labelledby="sh-m-l"><button type="button" data-shm="courier" aria-pressed="true">Kurir</button><button type="button" data-shm="self" aria-pressed="false">Diantar David sendiri</button></span></div>' +
+      '<div id="sh-cr"><div class="field"><label class="f" for="sh-c">Kurir</label><input id="sh-c" class="input" placeholder="Contoh: JNE, J&amp;T, Gojek"></div><div class="field"><label class="f" for="sh-r">Nomor resi</label><input id="sh-r" class="input"></div></div>' +
+      '<div id="sh-sf" style="display:none"><div class="field"><label class="f" for="sh-n">Perkiraan tiba / catatan (opsional)</label><input id="sh-n" class="input" maxlength="120" placeholder="Contoh: Besok sore"></div></div>' +
+      '<div class="field"><label class="f" for="sh-f">Ongkir aktual (opsional)</label><div class="rp"><input id="sh-f" class="input num" inputmode="numeric"></div></div>',
       actions: [{ label: 'Batal', kind: 'sec' }, { label: 'Simpan', fn: function (ov) { return doShip(ov, id, false); } }, { label: 'Simpan & buka WA', fn: function (ov) { return doShip(ov, id, true); } }] });
+    $$('[data-shm]', ov).forEach(function (b) { b.addEventListener('click', function () {
+      var m = b.getAttribute('data-shm');
+      var er = $('.errmsg', ov); if (er) er.remove();
+      $$('[data-shm]', ov).forEach(function (x) { x.setAttribute('aria-pressed', x === b); });
+      $('#sh-cr', ov).style.display = m === 'self' ? 'none' : ''; $('#sh-sf', ov).style.display = m === 'self' ? '' : 'none';
+    }); });
   }
   function doShip(ov, id, wa) {
-    var r = A.ship(id, { courier: $('#sh-c', ov).value, resi: $('#sh-r', ov).value, actual_fee: $('#sh-f', ov).value ? digits($('#sh-f', ov).value) : '' });
+    var self = $('[data-shm="self"]', ov).getAttribute('aria-pressed') === 'true';
+    var r = A.ship(id, { method: self ? 'self' : 'courier', courier: $('#sh-c', ov).value, resi: $('#sh-r', ov).value, note: $('#sh-n', ov).value, actual_fee: $('#sh-f', ov).value ? digits($('#sh-f', ov).value) : '' });
     if (!r.ok) { fieldErr(ov, r.error); return false; }
     var o = orderById(id); if (wa) waOpen(L.waLink(o.customer.wa, L.shipText(o)));
-    afterAction(r, 'Pesanan dikirim. Resi dicatat.');
+    afterAction(r, (self ? 'Pesanan ditandai diantar David.' : 'Pesanan dikirim. Resi dicatat.'));
   }
   function dlgCancel(id) {
     var o = orderById(id), paid = o.payment && o.payment.status === 'verified';
