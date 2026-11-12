@@ -54,8 +54,9 @@ Sudah berisi 5 nama (Daya Prima, Donic, Andro, Stiga, Sinar Surya) setelah `rese
 | `name` | wajib | nama distributor | `Daya Prima` |
 | `wa` | opsional (isi sebelum kirim PO) | nomor WhatsApp, diawali 62, tanpa spasi atau tanda | `6281234567890` (CONTOH FORMAT) |
 | `note` | opsional | catatan internal | `bayar H+7` (CONTOH FORMAT) |
+| `is_active` | opsional | `FALSE` = distributor nonaktif (tidak ditawarkan saat membuat PO baru; PO lama tetap terbaca) | `TRUE` |
 
-Tab ini **tidak pernah** dikirim ke pengunjung toko.
+Tab ini **tidak pernah** dikirim ke pengunjung toko. Tambah/ubah/nonaktifkan distributor sekarang juga bisa langsung dari **Dashboard > Distributor** (tidak wajib lewat Sheet lagi).
 
 ## Tab `products`
 
@@ -65,9 +66,11 @@ Tab ini **tidak pernah** dikirim ke pengunjung toko.
 | `name` | **wajib** | nama produk | `Nama Produk Contoh` |
 | `category` | **wajib** | harus sama dengan `id` di tab `categories` | `blade` |
 | `brand_id` | **wajib** | harus sama dengan `id` di tab `brands` | `merk-contoh` |
-| `price` | **wajib** | harga estimasi, rupiah utuh. **Harga jual ke customer — sudah termasuk untung/margin David**, bukan harga modal/distributor. Boleh `1.250.000`, `1250000`, atau `Rp 1.250.000`. Tidak boleh kosong, nol, atau teks seperti "dua juta" | `1.250.000` |
+| `price` | **wajib** | **Harga Distributor (modal)**, rupiah utuh — BUKAN harga jual ke customer. Boleh `1.250.000`, `1250000`, atau `Rp 1.250.000`. Tidak boleh kosong, nol, atau teks seperti "dua juta" | `1.250.000` |
+| `margin_type` | opsional | `pct` (persen) atau `rp` (rupiah pas). Kosong = pakai default margin kategori (Dashboard > Pengaturan) | `pct` |
+| `margin_value` | opsional (wajib bila `margin_type` diisi) | nilai margin sesuai tipenya | `15` |
 | `slug` | opsional | alamat halaman. Kosong = dibuat otomatis dari brand + nama | `merk-contoh-nama-produk-contoh` |
-| `price_to` | opsional | batas atas kisaran harga (angka) | `1.500.000` |
+| `price_to` | opsional | batas atas **kisaran harga pasar** (riset manual David, bukan hasil hitung modal+margin) | `1.500.000` |
 | `price_from` | opsional | `TRUE` = toko menulis "mulai ..." | `FALSE` |
 | `price_status` | opsional | `S` ada sumber, `L` sumber lemah, `P` perkiraan kasar (toko menulis "perkiraan kasar") | `S` |
 | `speed` | opsional (blade) | `OFF`, `ALL`, atau `DEF`; dipakai filter | `OFF` |
@@ -84,6 +87,10 @@ Tab ini **tidak pernah** dikirim ke pengunjung toko.
 | `is_active` | opsional | `FALSE` = produk disembunyikan dari toko | `TRUE` |
 
 Kolom `ref` boleh dibiarkan kosong (catatan internal; tidak dikirim ke publik).
+
+**Harga yang tampil ke customer** (toko, keranjang, Rakit Bet) = `price` (modal) + margin, dibulatkan ke atas Rp1.000 untuk margin persen — dihitung otomatis, **bukan** nilai yang ditulis di `price`. Margin lebih gampang diatur dari **Dashboard > Katalog > Atur margin** per produk daripada mengetik `margin_type`/`margin_value` di sheet langsung; keduanya menulis ke kolom yang sama.
+
+**Setelah skema kolom bertambah** (mis. baru menambah `margin_type`/`margin_value`/`is_active`): jalankan sekali fungsi `fixHeaders_()` dari editor Apps Script (Run > pilih fungsi > Run) supaya label kolom baris 1 ikut diperbarui. Tidak menyentuh baris data, aman diulang.
 
 Kenapa `handles`, `thicknesses`, `colors` wajib: aplikasi **tidak mengarang** pilihan varian. Pilihan yang muncul di toko dan di Rakit Bet persis yang Anda tulis. Kalau kosong untuk blade/karet, produknya ditandai belum lengkap.
 

@@ -8,8 +8,10 @@
 
   var K_ORD = 'ds_orders_v1';
   var K_PO = 'ds_pos_v1';
-  var K_SET = 'ds_settings_v1'; // tambahan dashboard: margin, alamat David, rekening, WA distributor
+  var K_SET = 'ds_settings_v1'; // tambahan dashboard: margin, alamat David, rekening
   var K_BRANDS = 'ds_brands_v1'; // [{id,name,visible}] — INF-01/ADM-21; brand yang tidak ada = visible true
+  var K_DIST = 'ds_distributors_v1'; // [{id,name,wa,note,is_active}] — CRUD distributor dari Dashboard, pola sama seperti K_BRANDS
+  var K_PMARGIN = 'ds_product_margin_v1'; // sku -> {margin_type:'pct'|'rp', margin_value} — override margin per produk, kosong = pakai default kategori
 
   var mem = {};
 
@@ -50,8 +52,7 @@
       bank: { bank: '', no: '', name: '' },
       pay_hours: 24,
       margins: { blade: 15, karet: 15, bet_rakitan: 15, bet_jadi: 20, bola: 20, meja: 12, net: 20, tas: 25,
-        sepatu: 15, apparel: 25, aksesoris: 25, alat_latihan: 12, lainnya: 15 },
-      distributors: {} // id -> { wa, note } penimpa
+        sepatu: 15, apparel: 25, aksesoris: 25, alat_latihan: 12, lainnya: 15 }
     };
   }
 
@@ -116,7 +117,7 @@
   }
 
   var DS = {
-    KEYS: { orders: K_ORD, pos: K_PO, settings: K_SET, brands: K_BRANDS },
+    KEYS: { orders: K_ORD, pos: K_PO, settings: K_SET, brands: K_BRANDS, distributors: K_DIST, productMargin: K_PMARGIN },
     DISTRIBUTORS: DISTRIBUTORS,
     CATEGORIES: CATEGORIES,
     isoWIB: isoWIB,
@@ -147,23 +148,75 @@
       d.bank = Object.assign(d.bank, s.bank || {});
       d.pay_hours = Number(s.pay_hours) > 0 ? Number(s.pay_hours) : d.pay_hours;
       d.margins = Object.assign(d.margins, s.margins || {});
-      d.distributors = s.distributors || {};
       return d;
     },
     saveSettings: function (s) { return write(K_SET, s); },
+
+    // ---------- distributor (INF-01 / CRUD Dashboard) ----------
+    // Gabungan DS_CATALOG.distributors (tab Sheet) + ds_distributors_v1 (override lokal: tambah/ubah/nonaktifkan).
+    // Sama persis pola getBrands()/setBrandVisible() di bawah.
     getDistributors: function () {
-      var ov = DS.getSettings().distributors;
-      var cat = root.DS_CATALOG, base = DISTRIBUTORS;
-      // daftar distributor dari tab `distributors` (lewat katalog hasil pull); kosong = daftar kosong
+      var cat = root.DS_CATALOG, base = DISTRIBUTORS, out = [], idx = {};
       if (cat && Array.isArray(cat.distributors)) base = cat.distributors;
-      return base.map(function (d) {
-        var o = ov[d.id] || {};
-        return { id: d.id, name: d.name, wa: o.wa || d.wa, note: o.note != null ? o.note : (d.note || '') };
-      });
+      var stored = read(K_DIST);
+      var sv = {};
+      if (Array.isArray(stored)) stored.forEach(function (d) { if (d && d.id != null) sv[d.id] = d; });
+      function add(id, name, wa, note, isActive) {
+        if (idx[id] != null) return;
+        var s = sv[id];
+        idx[id] = out.length;
+        out.push({
+          id: id, name: (s && s.name) || name || id,
+          wa: s && s.wa != null ? s.wa : (wa || ''),
+          note: s && s.note != null ? s.note : (note || ''),
+          is_active: s ? s.is_active !== false : (isActive !== false)
+        });
+      }
+      base.forEach(function (d) { if (d && d.id != null) add(d.id, d.name, d.wa, d.note, d.is_active); });
+      Object.keys(sv).forEach(function (id) { add(id, sv[id].name, sv[id].wa, sv[id].note); });
+      return out;
     },
     distributorName: function (id) {
       var f = DS.getDistributors().filter(function (d) { return d.id === id; })[0];
       return f ? f.name : (id || '—');
+    },
+    // rec: {id?, name, wa, note}. Tanpa id = distributor baru (id dibuat dari nama, dipastikan unik). -> {ok, id} | {ok:false, error}
+    upsertDistributor: function (rec) {
+      var name = String((rec && rec.name) || '').trim();
+      if (!name) return { ok: false, error: 'Nama distributor wajib diisi.' };
+      var stored = read(K_DIST); stored = Array.isArray(stored) ? stored.slice() : [];
+      var id = rec.id;
+      if (!id) {
+        var taken = {}; DS.getDistributors().forEach(function (d) { taken[d.id] = true; });
+        var base = slugify(name) || 'distributor', cand = base, n = 2;
+        while (taken[cand]) { cand = base + '-' + n; n++; }
+        id = cand;
+      }
+      // is_active lama diambil dari status gabungan saat ini (Sheet + override), bukan cuma override lokal —
+      // supaya mengubah nama/WA tidak diam-diam mengaktifkan lagi distributor yang dinonaktifkan langsung di Sheet.
+      var existing = DS.getDistributors().filter(function (d) { return d.id === id; })[0];
+      var found = false, wasActive = existing ? existing.is_active !== false : true;
+      stored = stored.map(function (d) {
+        if (d && d.id === id) { found = true; return { id: id, name: name, wa: rec.wa || '', note: rec.note || '', is_active: wasActive }; }
+        return d;
+      });
+      if (!found) stored.push({ id: id, name: name, wa: rec.wa || '', note: rec.note || '', is_active: true });
+      write(K_DIST, stored);
+      return { ok: true, id: id };
+    },
+    // soft-delete: distributor lama tetap ada (riwayat PO tetap terbaca), cuma disembunyikan dari pilihan PO baru.
+    setDistributorActive: function (id, active) {
+      var hit = DS.getDistributors().filter(function (d) { return d.id === id; })[0];
+      if (!hit) return false;
+      var stored = read(K_DIST); stored = Array.isArray(stored) ? stored.slice() : [];
+      var found = false;
+      stored = stored.map(function (d) {
+        if (d && d.id === id) { found = true; return { id: id, name: hit.name, wa: hit.wa, note: hit.note, is_active: !!active }; }
+        return d;
+      });
+      if (!found) stored.push({ id: id, name: hit.name, wa: hit.wa, note: hit.note, is_active: !!active });
+      write(K_DIST, stored);
+      return true;
     },
 
     // ---------- brand (INF-01 / ADM-21) ----------
@@ -208,6 +261,20 @@
         if (b.id === k || String(b.name).toLowerCase() === kl || b.id === ks) { res = b.visible; break; }
       }
       return res;
+    },
+
+    // ---------- margin produk (Katalog > Atur margin) ----------
+    // Override per-SKU, kosong = pakai default kategori (DS.getSettings().margins). sku -> {margin_type, margin_value}
+    getProductMargin: function (sku) {
+      var m = read(K_PMARGIN);
+      return (m && typeof m === 'object' && m[sku]) || null;
+    },
+    setProductMargin: function (sku, marginType, marginValue) {
+      var m = read(K_PMARGIN); m = (m && typeof m === 'object') ? Object.assign({}, m) : {};
+      if (marginType == null || marginValue === '' || marginValue == null) delete m[sku];
+      else m[sku] = { margin_type: marginType, margin_value: Number(marginValue) || 0 };
+      write(K_PMARGIN, m);
+      return true;
     },
 
     // ---------- kait sinkron (dipasang sync.js) ----------

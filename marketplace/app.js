@@ -350,7 +350,7 @@
     return '<a class="card' + (feat ? ' card--feat' : '') + '" href="#/produk/' + p.slug + '" data-reveal style="--i:' + Math.min(i || 0, 8) + '" title="' + esc(p.brand + ' ' + p.name) + '">' +
       '<div class="card__img">' + photo(p) + (imgOf(p) ? '' : '<span class="foto">Foto segera</span>') + '</div>' +
       '<div class="card__body"><div class="card__brand">' + esc(p.brand) + '</div><div class="card__name">' + esc(p.name) + '</div><div class="card__spec">' + esc(specLine(p)) + '</div>' +
-      '<div class="card__price">' + mulai + priceHtml(p.price) + '</div><div class="card__est">' + priceNote(p) + ' · harga final dikonfirmasi</div></div></a>';
+      '<div class="card__price">' + mulai + priceHtml(p.sell_price) + '</div><div class="card__est">' + priceNote(p) + ' · harga final dikonfirmasi</div></div></a>';
   }
   function initReveal(root) {
     var els = $$('[data-reveal]', root);
@@ -458,8 +458,8 @@
       if (f.cat && p.category !== f.cat) return false;
       if (toks.length) { var hay = (p.brand + ' ' + p.name + ' ' + catName(p.category)).toLowerCase(); if (!toks.every(function (t) { return hay.indexOf(t) >= 0; })) return false; }
       if (f.brand.length && f.brand.indexOf(p.brand) < 0) return false;
-      if (!isNaN(min) && p.price < min) return false;
-      if (!isNaN(max) && p.price > max) return false;
+      if (!isNaN(min) && p.sell_price < min) return false;
+      if (!isNaN(max) && p.sell_price > max) return false;
       if (f.th.length && !f.th.some(function (v) { return optVals(p, 'thickness').indexOf(v) >= 0; })) return false;
       if (f.col.length && !f.col.some(function (v) { return optVals(p, 'color').indexOf(v) >= 0; })) return false;
       if (f.type.length && f.type.indexOf(p.type) < 0) return false;
@@ -471,8 +471,8 @@
   }
   function sortList(list, s) {
     var a = list.slice();
-    if (s === 'asc') a.sort(function (x, y) { return x.price - y.price; });
-    else if (s === 'desc') a.sort(function (x, y) { return y.price - x.price; });
+    if (s === 'asc') a.sort(function (x, y) { return x.sell_price - y.sell_price; });
+    else if (s === 'desc') a.sort(function (x, y) { return y.sell_price - x.sell_price; });
     else if (s === 'az') a.sort(function (x, y) { return (x.brand + x.name).localeCompare(y.brand + y.name); });
     return a;
   }
@@ -577,7 +577,7 @@
     app.innerHTML = '<div class="container page has-buybar"><a class="crumb" href="#/katalog/' + p.category + '">' + ico('left') + ' ' + catName(p.category) + '</a>' +
       '<div class="pd"><div><div class="pd__img" id="pdImg">' + photo(p) + (imgOf(p) ? '' : '<span class="foto">Foto segera</span>') + '</div>' + (imgOf(p) ? '<p class="hint pd__ref">Foto referensi</p>' : '') + '</div>' +
       '<div class="pd__info"><div class="eyebrow">' + esc(p.brand) + '</div><h1>' + esc(p.name) + '</h1>' +
-      '<div class="pd__price num">' + ((p.price_to || p.price_from) ? '<small style="font-family:var(--font-sans);font-size:14px;font-weight:500;color:var(--text-muted)">mulai </small>' : '') + priceHtml(p.price) + '</div>' +
+      '<div class="pd__price num">' + ((p.price_to || p.price_from) ? '<small style="font-family:var(--font-sans);font-size:14px;font-weight:500;color:var(--text-muted)">mulai </small>' : '') + priceHtml(p.sell_price) + '</div>' +
       '<div class="pd__est">' + (p.price_status === 'P' ? 'Perkiraan kasar, belum ada harga pasti di Indonesia. ' : 'Harga estimasi. ') + 'Harga final dikonfirmasi setelah cek ketersediaan ke distributor.' + (p.price_to ? ' Kisaran di pasar sampai ' + rupiah(p.price_to) + '.' : '') + '</div>' +
       '<div id="opts"></div><div id="buy"></div>' +
       '<div style="margin-top:24px">' + (p.spec.length ? '<h2 style="font-size:16px;margin-bottom:4px">Spesifikasi</h2><table class="spec">' + p.spec.map(function (s) { return '<tr><th>' + esc(s[0]) + '</th><td>' + esc(s[1]) + '</td></tr>'; }).join('') + '</table><p class="hint" style="margin:6px 0 16px;font-size:13px">Spesifikasi dari riset awal, belum diverifikasi ke brand.</p>' : '') +
@@ -599,7 +599,7 @@
       $('#opts').innerHTML = oh;
       var miss = missing();
       $('#buy').innerHTML = '<div class="buybar buybar--inline">' + (miss ? '<div class="buybar__help" role="status">Pilih ' + esc(miss.label.replace(/ \(.*\)/, '').toLowerCase()) + ' dulu</div>' : '') +
-        '<div class="buybar__total num">' + rupiah(p.price * qty) + '<small>estimasi</small></div><button class="btn" id="btnAdd" type="button"' + (miss ? ' aria-disabled="true"' : '') + '>' + ico('bag') + '<span>Tambah ke Keranjang</span></button></div>';
+        '<div class="buybar__total num">' + rupiah(p.sell_price * qty) + '<small>estimasi</small></div><button class="btn" id="btnAdd" type="button"' + (miss ? ' aria-disabled="true"' : '') + '>' + ico('bag') + '<span>Tambah ke Keranjang</span></button></div>';
     }
     draw();
     app.addEventListener('click', function (e) {
@@ -611,7 +611,7 @@
       if (add) {
         var miss = missing();
         if (miss) { toast('Pilih ' + miss.label.replace(/ \(.*\)/, '').toLowerCase() + ' dulu.', { err: true }); return; }
-        addToCart({ line_id: '', key: '', kind: 'product', sku: p.sku, brand: p.brand, name: p.name, variant: variantLabel(p, sel), qty: qty, est_price: p.price, components: null });
+        addToCart({ line_id: '', key: '', kind: 'product', sku: p.sku, brand: p.brand, name: p.name, variant: variantLabel(p, sel), qty: qty, est_price: p.sell_price, components: null });
         flyToCart($('#pdImg'), p.category);
         var lab = $('span', add); lab.textContent = 'Ditambahkan'; add.classList.add('added');
         setTimeout(function () { if (add.isConnected) { lab.textContent = 'Tambah ke Keranjang'; add.classList.remove('added'); } }, 1500);
@@ -635,7 +635,7 @@
   }
   function rakitTotal() {
     var t = CAT.assembly_fee || 0, b = R.blade.sku && byId(R.blade.sku), f = R.fh.sku && byId(R.fh.sku), h = R.bh.sku && byId(R.bh.sku);
-    return t + (b ? b.price : 0) + (f ? f.price : 0) + (h ? h.price : 0);
+    return t + (b ? b.sell_price : 0) + (f ? f.sell_price : 0) + (h ? h.sell_price : 0);
   }
   function rakitDone(step) {
     if (step === 1) return !!(R.blade.sku && R.blade.handle);
@@ -673,9 +673,9 @@
       if (prev !== html) { lab.innerHTML = html; lab.dataset.h = html; }
       var rows = '', b = R.blade.sku && byId(R.blade.sku), f = R.fh.sku && byId(R.fh.sku), h = R.bh.sku && byId(R.bh.sku);
       function row(l, v) { return '<div class="sumrow"><span>' + l + '</span><span>' + (v == null ? '<span class="hint">—</span>' : num(v)) + '</span></div>'; }
-      rows += row('Blade ' + (b ? esc(b.name) + (R.blade.handle ? ' · ' + R.blade.handle : '') : ''), b ? b.price : null);
-      rows += row('Karet FH ' + (f ? esc(f.name) + ' · ' + esc(R.fh.color || '?') + ' ' + esc(R.fh.thickness || '') : ''), f ? f.price : null);
-      rows += row('Karet BH ' + (h ? esc(h.name) + ' · ' + esc(R.bh.color || '?') + ' ' + esc(R.bh.thickness || '') : ''), h ? h.price : null);
+      rows += row('Blade ' + (b ? esc(b.name) + (R.blade.handle ? ' · ' + R.blade.handle : '') : ''), b ? b.sell_price : null);
+      rows += row('Karet FH ' + (f ? esc(f.name) + ' · ' + esc(R.fh.color || '?') + ' ' + esc(R.fh.thickness || '') : ''), f ? f.sell_price : null);
+      rows += row('Karet BH ' + (h ? esc(h.name) + ' · ' + esc(R.bh.color || '?') + ' ' + esc(R.bh.thickness || '') : ''), h ? h.sell_price : null);
       rows += CAT.assembly_fee == null ? '<div class="sumrow"><span>Perakitan + lem + sealing</span><span class="hint">[?] dikonfirmasi David</span></div>' : row('Perakitan + lem + sealing', CAT.assembly_fee);
       var t = rakitTotal(), changed = lastTotal !== null && lastTotal !== t; lastTotal = t;
       $('#rkPrice').innerHTML = rows + '<div class="sumrow total"><span>Total estimasi (Rp)</span><span class="num"><span class="roll"><span class="' + (changed ? 'roll__v' : '') + '">' + num(t) + '</span></span></span></div><p class="hint" style="font-size:13px">Harga estimasi' + (CAT.assembly_fee == null ? ', belum termasuk biaya rakit' : '') + '. Final dikonfirmasi setelah cek ketersediaan.</p>';
@@ -695,7 +695,7 @@
       var selOpts = cat === 'karet' ? ['', 'Inverted', 'Anti-spin'] : ['', 'OFF', 'ALL'];
       return '<div class="field" style="margin-bottom:12px"><label for="qf">Filter cepat: ' + (cat === 'karet' ? 'tipe' : 'kecepatan') + '</label><select class="select" id="qf" data-cat="' + cat + '">' + selOpts.map(function (v) { return '<option value="' + v + '"' + (fv === v ? ' selected' : '') + '>' + (v || 'Semua') + '</option>'; }).join('') + '</select></div>' +
         '<div class="plist">' + items.map(function (p) {
-          return '<button class="prow" type="button" data-pick="' + esc(p.sku) + '" aria-pressed="' + (cur === p.sku) + '"><span class="prow__img">' + photo(p) + '</span><span><b>' + esc(p.brand + ' ' + p.name) + '</b><small>' + esc(specLine(p)) + '</small></span><span class="p">' + ((p.price_to || p.price_from) ? '<small style="font-weight:500;color:var(--text-muted)">mulai </small>' : '') + num(p.price) + '</span></button>';
+          return '<button class="prow" type="button" data-pick="' + esc(p.sku) + '" aria-pressed="' + (cur === p.sku) + '"><span class="prow__img">' + photo(p) + '</span><span><b>' + esc(p.brand + ' ' + p.name) + '</b><small>' + esc(specLine(p)) + '</small></span><span class="p">' + ((p.price_to || p.price_from) ? '<small style="font-weight:500;color:var(--text-muted)">mulai </small>' : '') + num(p.sell_price) + '</span></button>';
         }).join('') + '</div>';
     }
     function optsFor(side) {
@@ -765,7 +765,7 @@
           line_id: '', key: '', kind: 'rakitan', sku: 'RAKIT-' + b.sku + '-' + f.sku + '-' + h2.sku, brand: 'Rakitan', name: 'Bet Rakitan ' + b.name,
           variant: R.blade.handle + ' · FH ' + R.fh.color + ' ' + variantLabel(f, { thickness: R.fh.thickness }) + ' · BH ' + R.bh.color + ' ' + variantLabel(h2, { thickness: R.bh.thickness }),
           qty: 1, est_price: rakitTotal(),
-          components: { blade: { sku: b.sku, category: 'blade', name: b.brand + ' ' + b.name, handle: R.blade.handle, price: b.price }, fh: { sku: f.sku, category: 'karet', name: f.brand + ' ' + f.name, thickness: R.fh.thickness, color: R.fh.color, price: f.price }, bh: { sku: h2.sku, category: 'karet', name: h2.brand + ' ' + h2.name, thickness: R.bh.thickness, color: R.bh.color, price: h2.price }, assembly_fee: CAT.assembly_fee }
+          components: { blade: { sku: b.sku, category: 'blade', name: b.brand + ' ' + b.name, handle: R.blade.handle, price: b.sell_price }, fh: { sku: f.sku, category: 'karet', name: f.brand + ' ' + f.name, thickness: R.fh.thickness, color: R.fh.color, price: f.sell_price }, bh: { sku: h2.sku, category: 'karet', name: h2.brand + ' ' + h2.name, thickness: R.bh.thickness, color: R.bh.color, price: h2.sell_price }, assembly_fee: CAT.assembly_fee }
         };
         addToCart(line); flyToCart($('#flip'), 'rakit'); toast('Bet rakitan masuk keranjang.', { href: '#/checkout', label: 'Checkout' });
       }

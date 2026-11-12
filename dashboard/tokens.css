@@ -16,17 +16,23 @@
   --font-mono:"IBM Plex Mono", ui-monospace, Menlo, monospace;
   --fs-14:.875rem; --fs-16:1rem; --fs-18:1.125rem; --fs-20:1.25rem; --fs-24:1.5rem; --fs-30:1.875rem;
   --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:20px; --sp-6:24px; --sp-8:32px; --sp-10:40px; --sp-12:48px;
-  --r-xs:4px; --r-sm:6px; --r-md:10px;
-  --sh-1:0 1px 2px rgba(26,29,33,.08); --sh-3:0 20px 40px -12px rgba(15,40,67,.35);
+  --r-xs:4px; --r-sm:6px; --r-md:10px; --r-xl:20px;
+  --sh-1:0 1px 2px rgba(26,29,33,.08); --sh-2:0 4px 20px -6px rgba(15,40,67,.14); --sh-3:0 20px 40px -12px rgba(15,40,67,.35);
   --dur-fast:150ms; --z-modal:90; --z-toast:100;
   --ease-out:cubic-bezier(.22,1,.36,1);
+
+  /* ---------- Bahasa visual Dashboard: sidebar navy + kartu mengambang (keputusan Kevin 2026-11-12) ---------- */
+  --side-bg:var(--brand-900); --side-text:#FFFFFF; --side-text-muted:#A9BDD2;
+  --side-hover-bg:rgba(255,255,255,.08); --side-active-bg:rgba(255,255,255,.14);
+  --page-grad:radial-gradient(1100px 460px at 8% -12%, var(--brand-50) 0%, var(--n-0) 55%);
+  --chart-grad-a:var(--brand-500); --chart-grad-b:var(--brand-700);
 }
 [data-app="dashboard"] {
-  --fs-base:var(--fs-18); --input-h:52px; --tap-min:48px;
+  --fs-base:var(--fs-16); --input-h:48px; --tap-min:44px;
   --border-strong:#8A9099; --text-muted:var(--n-700); --dur-base:200ms; --dur-slow:250ms;
 }
 html { -webkit-text-size-adjust:100%; }
-[data-app="dashboard"] body { margin:0; background:var(--bg); color:var(--text); font:400 var(--fs-18)/1.5 var(--font-sans); }
+[data-app="dashboard"] body { margin:0; background:var(--page-grad); color:var(--text); font:400 var(--fs-16)/1.5 var(--font-sans); }
 .num, td.num, .price { font-variant-numeric:tabular-nums; }
 :focus-visible { outline:3px solid var(--focus-ring); outline-offset:2px; }
 @media (prefers-reduced-motion: reduce) {

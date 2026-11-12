@@ -22,7 +22,7 @@
  *   POST { op:"order_create", name, wa, address, city, note, items:[...], client_ref, hp } -> { ok, id, wa, track_key, order }
  *   POST { op:"order_customer_action", id, wa, k, action: item_decision|cancel|payment_proof, ... } -> { ok, order }
  * Token salah -> { ok:false, error:"unauthorized" } (HTTP tetap 200).
- * Dijalankan manual dari editor: setupSheet(), resetMasterTabs() (sekali).
+ * Dijalankan manual dari editor: setupSheet(), resetMasterTabs() (sekali), fixHeaders_() (tiap kali HEADERS dapat kolom baru).
  */
 
 /* ============================================================ definisi tab */
@@ -31,8 +31,8 @@ var HEADERS = {
   settings: ['id', 'value', 'note', 'updated_at'],
   brands: ['id', 'name', 'visible', 'distributor_id', 'sort', 'updated_at'],
   categories: ['id', 'name', 'prefix', 'sort', 'updated_at'],
-  distributors: ['id', 'name', 'wa', 'note', 'updated_at'],
-  products: ['sku', 'slug', 'ref', 'category', 'brand_id', 'name', 'price', 'price_to', 'price_from', 'price_status',
+  distributors: ['id', 'name', 'wa', 'note', 'is_active', 'updated_at'],
+  products: ['sku', 'slug', 'ref', 'category', 'brand_id', 'name', 'price', 'margin_type', 'margin_value', 'price_to', 'price_from', 'price_status',
     'speed', 'type', 'note', 'handles', 'thicknesses', 'colors', 'isi', 'sizes', 'widths', 'spec', 'image', 'is_active', 'updated_at'],
   orders: ['id', 'status', 'created_at', 'updated_at', 'customer_name', 'customer_wa', 'city', 'item_count', 'subtotal_est',
     'shipping_fee', 'total_final', 'payment_status', 'pay_deadline', 'courier', 'resi', 'json'],
@@ -299,8 +299,9 @@ function safeParse_(s) { try { return JSON.parse(s); } catch (e) { return null; 
 var PUBLIC_POST_OPS = { order_create: 1, order_customer_action: 1 };
 var PUBLIC_CATEGORY_COLS = ['id', 'name', 'prefix', 'sort'];
 var PUBLIC_BRAND_COLS = ['id', 'name', 'sort']; // tanpa distributor_id (peta pemasok tidak untuk publik)
-// Daftar-putih kolom produk. Kolom lain (ref, is_active, updated_at, dan kolom biaya apa pun yang kelak ditambah) TIDAK pernah keluar.
-var PUBLIC_PRODUCT_COLS = ['sku', 'slug', 'category', 'brand_id', 'name', 'price', 'price_to', 'price_from', 'price_status',
+// Daftar-putih kolom produk. 'price' (harga distributor/modal) dan 'margin_type'/'margin_value' SENGAJA tidak ada di sini —
+// publik hanya boleh melihat 'sell_price' hasil hitung (lihat priceFrom_/catalogPayload_). Kolom lain yang kelak ditambah TIDAK pernah keluar.
+var PUBLIC_PRODUCT_COLS = ['sku', 'slug', 'category', 'brand_id', 'name', 'price_to', 'price_from', 'price_status',
   'speed', 'type', 'note', 'handles', 'thicknesses', 'colors', 'isi', 'sizes', 'widths', 'spec', 'image'];
 var LIM = { name: 80, address: 300, city: 60, note: 300, variant: 120, proof: 120, items: 20, qtyMax: 20 };
 var QUOTA = { windowMs: 600000, globalMax: 30, perWaMax: 3, trackFailMax: 10, dayMax: 200 };
@@ -346,10 +347,33 @@ function normWa_(s) {
 }
 function validWa_(s) { return /^628\d{8,12}$/.test(normWa_(s)); }
 
+// Harga jual dari modal + margin. Persis logic.js priceFrom() di Dashboard (tanpa 'extra', katalog tidak ada biaya tambahan).
+// type 'rp' = tambah rupiah pas; selain itu (persen) = bulat ke atas Rp1.000.
+function priceFrom_(cost, type, value) {
+  value = Number(value) || 0;
+  if (type === 'rp') return Math.round(cost + value);
+  var marginRp = Math.round(cost * value / 100);
+  return Math.ceil((cost + marginRp) / 1000) * 1000;
+}
+// margin efektif suatu produk: override produk sendiri (margin_type 'pct'/'rp') kalau ada, kalau tidak pakai default kategori (persen).
+function marginOf_(p, margins) {
+  var mt = String((p && p.margin_type) || '').trim().toLowerCase();
+  if (mt === 'pct' || mt === 'rp') return { type: mt, value: Number(p.margin_value) || 0 };
+  return { type: 'pct', value: (margins && margins[p.category] != null) ? Number(margins[p.category]) || 0 : 0 };
+}
+// harga jual sebuah baris produk mentah (Harga Distributor di kolom 'price' + margin). cost null (tidak valid) -> null.
+function sellPriceOf_(p, margins) {
+  var cost = parseMoneyStrict_(p.price);
+  if (cost == null) return null;
+  var m = marginOf_(p, margins);
+  return priceFrom_(cost, m.type, m.value);
+}
+
 // Payload publik op=catalog dari baris mentah { categories:[obj], brands:[obj], products:[obj] }.
 // Hanya brand visible, hanya produk is_active (dan bukan milik brand yang disembunyikan). Tidak ada distributors/settings/orders/PO.
-function catalogPayload_(raw) {
-  raw = raw || {};
+// margins: default margin per kategori (settings), dipakai bila produk tidak punya margin_type/margin_value sendiri.
+function catalogPayload_(raw, margins) {
+  raw = raw || {}; margins = margins || {};
   var brandsAll = raw.brands || [], hidden = {};
   var brands = brandsAll.filter(function (b) {
     var id = String(b.id === undefined ? '' : b.id).trim();
@@ -359,7 +383,11 @@ function catalogPayload_(raw) {
   }).map(function (b) { return pick_(b, PUBLIC_BRAND_COLS); });
   var products = (raw.products || []).filter(function (p) {
     return String(p.sku === undefined ? '' : p.sku).trim() !== '' && parseBool_(p.is_active) && !hidden[String(p.brand_id || '').trim()];
-  }).map(function (p) { return pick_(p, PUBLIC_PRODUCT_COLS); });
+  }).map(function (p) {
+    var out = pick_(p, PUBLIC_PRODUCT_COLS);
+    out.sell_price = sellPriceOf_(p, margins); // null bila harga distributor belum/salah isi — klien sudah menangani harga null (tidak layak tampil)
+    return out;
+  });
   var categories = (raw.categories || []).filter(function (c) { return String(c.id === undefined ? '' : c.id).trim() !== ''; })
     .map(function (c) { return pick_(c, PUBLIC_CATEGORY_COLS); });
   return { categories: categories, brands: brands, products: products };
@@ -384,6 +412,12 @@ function productProblems_(r, brandsById, catsById) {
 
 function indexBy_(rows, key) { var m = {}; (rows || []).forEach(function (r) { var k = String(r[key] === undefined ? '' : r[key]).trim(); if (k && !m[k]) m[k] = r; }); return m; }
 function settingsMap_(rows) { var m = {}; (rows || []).forEach(function (r) { var k = String(r.id || '').trim(); if (k) m[k] = r.value; }); return m; }
+// settings flat ({'margin.karet':'15', ...}, lihat settingsToFlat di shared/sync.js) -> {kategori: angka}
+function marginsFromFlat_(flat) {
+  var m = {};
+  Object.keys(flat || {}).forEach(function (k) { if (k.indexOf('margin.') === 0) m[k.slice(7)] = Number(flat[k]) || 0; });
+  return m;
+}
 function err_(code, message) { return { ok: false, error: code, message: message }; }
 function thk_(v) { return v === 'Max' ? 'Max' : v + 'mm'; }
 
@@ -402,6 +436,7 @@ function buildOrderFromInput_(input, ctx) {
   if (!Array.isArray(items) || !items.length) return err_('invalid_input', 'Keranjang kosong.');
   if (items.length > LIM.items) return err_('invalid_input', 'Maksimal ' + LIM.items + ' baris barang per pesanan.');
   var brandsById = indexBy_(ctx.brands, 'id'), catsById = indexBy_(ctx.categories, 'id'), prodBySku = indexBy_(ctx.products, 'sku');
+  var margins = marginsFromFlat_(ctx.settings); // harga pesanan SELALU harga jual (modal+margin), tidak pernah modal mentah
   var feeRaw = ctx.settings ? ctx.settings.assembly_fee : '';
   var fee = feeFrom_(feeRaw); // kosong = belum ditentukan; "0" = gratis
   function sellable(sku) { // -> { row, brandName } | { error }
@@ -428,7 +463,7 @@ function buildOrderFromInput_(input, ctx) {
         var want = k === 'blade' ? 'blade' : 'karet';
         if (s.row.category !== want) return err_('invalid_input', 'Komponen bet rakitan tidak sesuai (' + k + ').');
         parts[k] = { s: s, c: c };
-        total += parseMoneyStrict_(s.row.price);
+        total += sellPriceOf_(s.row, margins);
       }
       if (parseList_(parts.blade.s.row.handles).indexOf(String(parts.blade.c.handle)) < 0) return err_('invalid_input', 'Handle blade tidak valid.');
       ['fh', 'bh'].forEach(function (kk) { parts[kk].bad = parseList_(parts[kk].s.row.thicknesses).indexOf(String(parts[kk].c.thickness)) < 0 || parseList_(parts[kk].s.row.colors).indexOf(String(parts[kk].c.color)) < 0; });
@@ -438,7 +473,7 @@ function buildOrderFromInput_(input, ctx) {
       var comps = {};
       keys.forEach(function (kk) {
         var p = parts[kk], r = p.s.row;
-        comps[kk] = { sku: r.sku, category: kk === 'blade' ? 'blade' : 'karet', name: p.s.brandName + ' ' + r.name, price: parseMoneyStrict_(r.price) };
+        comps[kk] = { sku: r.sku, category: kk === 'blade' ? 'blade' : 'karet', name: p.s.brandName + ' ' + r.name, price: sellPriceOf_(r, margins) };
         if (kk === 'blade') comps[kk].handle = p.c.handle; else { comps[kk].thickness = p.c.thickness; comps[kk].color = p.c.color; }
       });
       comps.assembly_fee = fee === null ? 0 : fee;
@@ -453,7 +488,7 @@ function buildOrderFromInput_(input, ctx) {
       var variant = cleanText_(it.variant, LIM.variant);
       if (variant === null) return err_('invalid_input', 'Varian terlalu panjang.');
       out.push({ line_id: line, kind: 'product', sku: sp.row.sku, category: sp.row.category, brand: sp.brandName, name: sp.row.name, variant: variant,
-        qty: qty, est_price: parseMoneyStrict_(sp.row.price), final_price: null, item_status: 'pending', distributor_id: null, components: null });
+        qty: qty, est_price: sellPriceOf_(sp.row, margins), final_price: null, item_status: 'pending', distributor_id: null, components: null });
     }
   }
   var at = ctx.stamp.slice(0, 19) + '+07:00';
@@ -608,8 +643,9 @@ function publicStore_(st) {
 function opCatalog_() {
   var hit = cacheGet_(CATALOG_CACHE_KEY);
   if (hit) return hit;
-  var payload = { ok: true, server_time: formatStamp_(new Date()), assembly_fee: feeFrom_(settingsNow_().assembly_fee), store: publicStore_(settingsNow_()), // daftar-putih kunci settings publik: assembly_fee, address, david_wa, store_hours
-    tabs: catalogPayload_({ categories: rawObjs_('categories'), brands: rawObjs_('brands'), products: rawObjs_('products') }) };
+  var settings = settingsNow_();
+  var payload = { ok: true, server_time: formatStamp_(new Date()), assembly_fee: feeFrom_(settings.assembly_fee), store: publicStore_(settings), // daftar-putih kunci settings publik: assembly_fee, address, david_wa, store_hours
+    tabs: catalogPayload_({ categories: rawObjs_('categories'), brands: rawObjs_('brands'), products: rawObjs_('products') }, marginsFromFlat_(settings)) };
   cachePut_(CATALOG_CACHE_KEY, payload, CATALOG_CACHE_SEC);
   return payload;
 }
@@ -920,6 +956,19 @@ function setupSheet() {
     throw new Error('Baris 1 tab ini sudah berisi header lain, tidak diubah: ' + problems.join(', ') + '. Ganti nama/hapus tabnya manual lalu jalankan lagi.');
   }
   return 'setupSheet selesai';
+}
+
+// Dijalankan manual dari editor sekali setelah skema HEADERS bertambah kolom (mis. is_active distributor,
+// margin_type/margin_value produk). HANYA menulis ulang label baris 1; baris data (2+) tidak pernah disentuh. Aman diulang.
+function fixHeaders_() {
+  var report = [];
+  MASTER_TABS.forEach(function (tab) {
+    var h = HEADERS[tab], sh = sheet_(tab, true);
+    sh.getRange(1, 1, 1, h.length).setValues([h]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+    report.push(tab + ': ' + h.length + ' kolom');
+  });
+  return report;
 }
 
 // SEKALI dari editor Apps Script (Run). MENGHAPUS isi baris data brands, products, categories (header tetap).

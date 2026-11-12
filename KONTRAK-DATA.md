@@ -19,8 +19,10 @@ order dibuat di `marketplace/index.html` → muncul di `dashboard/index.html` �
 |---|---|
 | `ds_orders_v1` | `Order[]` (JSON) |
 | `ds_pos_v1` | `PurchaseOrder[]` (JSON) |
-| `ds_settings_v1` | pengaturan dashboard (margin, alamat, rekening, override WA distributor) |
+| `ds_settings_v1` | pengaturan dashboard (margin default per kategori, alamat, rekening) |
 | `ds_brands_v1` | `[{id, name, visible}]`. Brand yang tidak ada di array = `visible: true`. Berlaku juga di mode lokal |
+| `ds_distributors_v1` | `[{id, name, wa, note, is_active}]` — tambah/ubah/nonaktifkan distributor dari Dashboard, pola sama seperti `ds_brands_v1`. Distributor yang tidak ada di array = ikut apa adanya dari tab Sheet |
+| `ds_product_margin_v1` | `{sku: {margin_type:'pct'\|'rp', margin_value}}` — override margin per produk dari Dashboard > Katalog > Atur margin. SKU yang tidak ada di map = pakai `margin_type`/`margin_value` dari Sheet, atau default margin kategori (`ds_settings_v1.margins`) bila keduanya kosong |
 | `ds_config_v1` | `{url, token}` Apps Script. Ada = mode sheet; kosong = mode lokal |
 | `ds_sync_v1` | `{queue:[{tab,id,v}], base, sig, last_pull_at, last_sync, last_error}` — internal sync.js |
 | `ds_catalog_v1` | cache `DS_CATALOG` hasil tarik sheet (mode sheet) |
@@ -35,7 +37,15 @@ Semua akses dibungkus `try/catch`; kalau storage tidak tersedia, halaman tetap j
 2. **Tanpa token tapi `DS_PUBLIC.catalogUrl` ada**: `GET ?op=catalog`, **hanya baca**, tidak ada tulis master. Hanya `categories`, `brands` (visible), `products` (is_active). Cache lokal `ds_catalog_pub_v1` dipakai bila jaringan gagal.
 3. **Tidak ada keduanya**: katalog kosong.
 
-Baris `products` dinilai di `buildCatalog`. Tidak layak (kolom kurang/salah) → TIDAK masuk `products`, dicatat di `DS_CATALOG.incomplete = [{sku, name, missing:[kolom]}]` (Dashboard Katalog menampilkan "data belum lengkap: <kolom>"). Aturan: `sku` wajib dan unik; `name`; `price` angka rupiah > 0 (`1.250.000`, `Rp 1.250.000`; "abc"/kosong/0 ditolak); `brand_id` harus ada di `brands`; `category` harus ada di `categories`; kategori `blade` butuh `handles`; `karet` butuh `thicknesses` dan `colors`. `slug` kosong = dibuat dari brand + nama. Pilihan varian hanya dari kolom sheet (tanpa nilai bawaan). `assembly_fee` dari `settings` (kosong = `null` = "[?] dikonfirmasi David").
+Baris `products` dinilai di `buildCatalog`. Tidak layak (kolom kurang/salah) → TIDAK masuk `products`, dicatat di `DS_CATALOG.incomplete = [{sku, name, missing:[kolom]}]` (Dashboard Katalog menampilkan "data belum lengkap: <kolom>"). Aturan: `sku` wajib dan unik; `name`; harga valid (mode admin: `price` = Harga Distributor, angka rupiah > 0; mode publik: `sell_price` hasil hitung server sudah pasti valid — lihat "Harga katalog" di bawah); `brand_id` harus ada di `brands`; `category` harus ada di `categories`; kategori `blade` butuh `handles`; `karet` butuh `thicknesses` dan `colors`. `slug` kosong = dibuat dari brand + nama. Pilihan varian hanya dari kolom sheet (tanpa nilai bawaan). `assembly_fee` dari `settings` (kosong = `null` = "[?] dikonfirmasi David").
+
+### Harga katalog (margin di distributor, bukan di `price`)
+
+Kolom `price` tab `products` = **harga dari distributor (modal)**, BUKAN harga jual ke customer. Harga jual dihitung sistem = modal + margin (`margin_type`/`margin_value` per produk — kosong = pakai default margin kategori di `ds_settings_v1.margins`/Pengaturan), dibulatkan ke atas Rp1.000 untuk margin persen (fungsi `priceFrom` di `dashboard/logic.js`, di-port 1:1 ke `priceFrom_` di `gsheet/Code.gs`).
+
+- **Mode admin** (`pull`, Dashboard bertoken): dapat `price` mentah + `margin_type`/`margin_value` apa adanya dari Sheet. Dashboard menghitung Harga Jual sendiri di klien (`catRows()`), termasuk override dari `ds_product_margin_v1`.
+- **Mode publik** (`op=catalog`, marketplace): `price`/`margin_type`/`margin_value` **tidak pernah** ikut terkirim (lihat `PUBLIC_PRODUCT_COLS`). Server menghitung `sell_price` (dan tidak ada `sell_price_to` — `price_to` tetap kisaran pasar manual David, bukan hasil hitung) dan hanya itu yang dikirim. Marketplace membaca `p.sell_price`, tidak pernah `p.price`.
+- Pesanan (`order_create`): `est_price` di `order_items` juga dihitung server dari modal+margin (`buildOrderFromInput_`), bukan dibaca mentah dari `price` — supaya customer tidak pernah "membayar" di harga modal.
 
 ## Jalur pesanan publik (tanpa token)
 

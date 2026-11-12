@@ -15,7 +15,7 @@
   var K_DROPPED = 'ds_local_dropped_v1'; // cadangan order/PO lokal yang tidak ikut ke sheet
   var K_CAT_PUB = 'ds_catalog_pub_v1'; // cache katalog publik (mode tanpa token)
   var AUTO_PULL_MS = 45000; // tarik otomatis berkala saat tab aktif (pesanan baru dari toko publik)
-  var TABS = ['settings', 'brands', 'distributors', 'orders', 'purchase_orders']; // urutan kirim
+  var TABS = ['settings', 'brands', 'distributors', 'products', 'orders', 'purchase_orders']; // urutan kirim
   var PULL_TIMEOUT = 10000;
   var PUSH_TIMEOUT = 20000;
   var RETRY_MS = 30000;
@@ -44,11 +44,14 @@
     return n > 0 ? n : null;
   }
   // Kolom yang kurang/salah pada satu baris produk (kosong = layak tampil). Cermin productProblems_ di Code.gs.
+  // Harga: mode publik (op=catalog) baris punya 'sell_price' (sudah dihitung server, tanpa 'price' mentah);
+  // mode admin (pull bertoken) baris punya 'price' mentah (Harga Distributor), tanpa 'sell_price'. Validasi yang ada saja.
   function productProblems(r, brandIds, catIds) {
     var bad = [], c = String(r.category || '').trim();
     if (!String(r.sku || r.id || '').trim()) bad.push('sku');
     if (!String(r.name || '').trim()) bad.push('name');
-    if (parseMoneyStrict(r.price) === null) bad.push('price');
+    var priceOk = r.sell_price !== undefined ? parseMoneyStrict(r.sell_price) !== null : parseMoneyStrict(r.price) !== null;
+    if (!priceOk) bad.push('price');
     if (String(r.price_to || '').trim() !== '' && parseMoneyStrict(r.price_to) === null) bad.push('price_to');
     if (!brandIds[String(r.brand_id || '').trim()]) bad.push('brand_id');
     if (!catIds[c]) bad.push('category');
@@ -99,6 +102,7 @@
       price_to: p.price_to == null ? '' : String(Math.round(p.price_to)),
       price_from: p.price_from ? 'TRUE' : 'FALSE',
       price_status: p.price_status || '',
+      margin_type: p.margin_type || '', margin_value: p.margin_value == null ? '' : String(p.margin_value),
       speed: p.speed || '', type: p.type || '', note: p.note || '',
       handles: optValues(p, 'handle'), thicknesses: optValues(p, 'thickness'), colors: optValues(p, 'color'),
       isi: optValues(p, 'isi'), sizes: optValues(p, 'size'), widths: optValues(p, 'width'),
@@ -130,7 +134,11 @@
       category: cat,
       brand: brandName,
       name: String(row.name || '').trim(),
-      price: parseMoney(row.price) || 0,
+      // mode admin (pull bertoken): 'price' = Harga Distributor mentah. mode publik (op=catalog): tidak ada 'price', ada 'sell_price' siap pakai.
+      price: row.price !== undefined ? (parseMoney(row.price) || 0) : null,
+      sell_price: row.sell_price !== undefined ? parseMoney(row.sell_price) : null,
+      margin_type: strOrNull(row.margin_type),
+      margin_value: String(row.margin_value || '').trim() === '' ? null : parseNum(row.margin_value),
       price_to: parseMoney(row.price_to),
       price_from: String(row.price_from || '').trim() === '' ? false : parseBool(row.price_from),
       price_status: String(row.price_status || '').trim() || 'S',
@@ -170,7 +178,7 @@
       return { id: String(r.id).trim(), name: String(r.name || r.id).trim(), prefix: String(r.prefix || '').trim() };
     });
     cat.distributors = (Array.isArray(tabs.distributors) ? tabs.distributors : []).filter(function (r) { return String(r.id == null ? '' : r.id).trim(); }).map(function (r) {
-      return { id: String(r.id).trim(), name: String(r.name || r.id).trim(), wa: String(r.wa || '').trim(), note: String(r.note || '') };
+      return { id: String(r.id).trim(), name: String(r.name || r.id).trim(), wa: String(r.wa || '').trim(), note: String(r.note || ''), is_active: parseBool(r.is_active) };
     });
     var nameById = {}, catIds = {}, seenSku = {}, seenSlug = {};
     cat.brands.forEach(function (b) { nameById[b.id] = b.name; });
@@ -208,7 +216,7 @@
     return f;
   }
   function flatToSettings(map) {
-    var s = { bank: {}, margins: {}, distributors: {} };
+    var s = { bank: {}, margins: {} };
     Object.keys(map).forEach(function (k) {
       var v = map[k];
       if (k === 'address' || k === 'david_wa' || k === 'store_hours') s[k] = String(v);
@@ -352,11 +360,6 @@
       var k = qk('settings', key), s = String(flat[key]);
       if (S.sig[k] !== s) { S.sig[k] = s; enqueue('settings', key); }
     });
-    var ov = cur.distributors || {};
-    Object.keys(ov).forEach(function (id) {
-      var k = qk('distributors', id), s = JSON.stringify({ wa: ov[id].wa == null ? null : ov[id].wa, note: ov[id].note == null ? null : ov[id].note });
-      if (S.sig[k] !== s) { S.sig[k] = s; enqueue('distributors', id); }
-    });
   }
   function brandSig(b) { return (b.visible !== false) + '|' + b.name; }
   function diffBrands(arr) {
@@ -367,6 +370,14 @@
       if (S.sig[k] !== s) { S.sig[k] = s; enqueue('brands', b.id); }
     });
   }
+  // margin per produk: ds_product_margin_v1 adalah map sku->{margin_type,margin_value}, bukan array (diffRecords butuh array)
+  function diffProductMargins(map) {
+    if (!map || typeof map !== 'object') return;
+    Object.keys(map).forEach(function (sku) {
+      var k = qk('products', sku), s = JSON.stringify(map[sku]);
+      if (S.sig[k] !== s) { S.sig[k] = s; enqueue('products', sku); }
+    });
+  }
 
   DS._onWrite = function (key, value) {
     if (rt.applying || !cfg) return;
@@ -375,6 +386,8 @@
     else if (key === DS.KEYS.pos) diffRecords('purchase_orders', value);
     else if (key === DS.KEYS.settings) diffSettings();
     else if (key === DS.KEYS.brands) diffBrands(value);
+    else if (key === DS.KEYS.distributors) diffRecords('distributors', value); // array {id,name,wa,note,is_active} — sigOf generik sudah cocok
+    else if (key === DS.KEYS.productMargin) diffProductMargins(value);
     else return;
     if (before !== S.queue.length + ':' + rt.seq) { emitStatus(); scheduleFlush(); }
   };
@@ -403,12 +416,14 @@
       return null;
     }
     if (tab === 'distributors') {
-      var o = (DS.getSettings().distributors || {})[id];
-      if (!o) return null;
-      var r = { id: id };
-      if (o.wa != null) r.wa = String(o.wa);
-      if (o.note != null) r.note = String(o.note);
-      return r;
+      a = DS.getDistributors();
+      for (i = 0; i < a.length; i++) if (a[i].id === id) return { id: id, name: a[i].name, wa: a[i].wa || '', note: a[i].note || '', is_active: a[i].is_active ? 'TRUE' : 'FALSE' };
+      return null;
+    }
+    if (tab === 'products') {
+      var pm = DS.getProductMargin(id); // override parsial: kolom lain di baris produk TIDAK disentuh (lihat mergeRecordIntoRow_ di Code.gs)
+      if (!pm) return null;
+      return { id: id, margin_type: pm.margin_type, margin_value: String(pm.margin_value) };
     }
     return null;
   }
@@ -592,17 +607,16 @@
       mergeTx('orders', tabs.orders, DS.getOrders, function (a) { DS.saveOrders(a); }, changed);
       mergeTx('purchase_orders', tabs.purchase_orders, DS.getPOs, function (a) { DS.savePOs(a); }, changed);
 
-      // settings (+ override distributor: tab distributors adalah kebenaran)
+      // settings
       if (Array.isArray(tabs.settings) && tabs.settings.length) {
         var before = JSON.stringify(ST.read(DS.KEYS.settings));
-        var qs = queued('settings'), qd = queued('distributors');
+        var qs = queued('settings');
         var curS = DS.getSettings();
         var localFlat = settingsToFlat(curS);
         var map = {};
         tabs.settings.forEach(function (r) { if (r.id) map[r.id] = r.value; });
         Object.keys(qs).forEach(function (k) { if (localFlat[k] != null) map[k] = localFlat[k]; });
         var ns = flatToSettings(map);
-        Object.keys(qd).forEach(function (id) { if (curS.distributors && curS.distributors[id]) ns.distributors[id] = curS.distributors[id]; });
         DS.saveSettings(ns);
         if (JSON.stringify(ST.read(DS.KEYS.settings)) !== before) changed.push('settings');
         var flat2 = settingsToFlat(DS.getSettings());

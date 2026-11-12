@@ -40,7 +40,12 @@
     info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
     eye: '<path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"/><circle cx="12" cy="12" r="3"/>',
     more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
-    layout: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/>'
+    layout: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/>',
+    search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+    bell: '<path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/>',
+    user: '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+    'trending-up': '<path d="M16 7h6v6"/><path d="m22 7-8.5 8.5-5-5L2 17"/>',
+    percent: '<line x1="19" x2="5" y1="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/>'
   };
   function ic(n) { return '<svg viewBox="0 0 24 24" aria-hidden="true" stroke-linecap="round" stroke-linejoin="round">' + (IC[n] || '') + '</svg>'; }
 
@@ -160,7 +165,7 @@
   }
   function renderSide(sec) {
     var c = counts(), oldNav = $('#side .nav'), sl = oldNav ? oldNav.scrollLeft : 0; // nav digeser Kevin: jangan kembali ke awal
-    $('#side').innerHTML = '<div class="brand"><img class="logo-full" src="../assets/logo/logo.svg" alt="DStore" height="32"><img class="logo-mark" src="../assets/logo/icon.svg" alt="DStore" height="32"><small>Dashboard David</small><span class="hdr-sync">' + syncBadge() + '</span></div><div class="nav">' +
+    $('#side').innerHTML = '<div class="brand"><img class="logo-full" src="../assets/logo/logo-inverse.svg" alt="DStore" height="32"><img class="logo-mark" src="../assets/logo/mark-inverse.svg" alt="DStore" height="32"><small>Dashboard David</small><span class="hdr-sync">' + syncBadge() + '</span></div><div class="nav">' +
       NAV.map(function (n) {
         var k = c[n[0] === 'pesanan' ? 'orders' : n[0] === 'po' ? 'po' : ''];
         return '<a href="#/' + n[0] + '"' + (n[0] === sec ? ' aria-current="page"' : '') + '>' + ic(n[2]) + '<span>' + n[1] + '</span>' + (k ? '<span class="cnt" aria-label="' + k + ' perlu tindakan">' + k + '</span>' : '') + '</a>';
@@ -172,6 +177,24 @@
     if (cur && nav.scrollWidth > nav.clientWidth) { var l = cur.offsetLeft - nav.offsetLeft, rgt = l + cur.offsetWidth; if (l < nav.scrollLeft) nav.scrollLeft = l - 8; else if (rgt > nav.scrollLeft + nav.clientWidth) nav.scrollLeft = rgt - nav.clientWidth + 8; }
   }
 
+  // ---------- topbar: cari langsung ke pesanan/PO, bell = perlu tindakan (sama dengan lencana sidebar), avatar = Pengaturan ----------
+  function renderTopbar() {
+    var c = counts();
+    var tb = $('#topbar'); if (!tb) return;
+    tb.innerHTML = '<form class="tb-search" id="tbSearch" role="search">' + ic('search') +
+      '<input type="search" id="tbq" placeholder="Cari no. pesanan/PO…" aria-label="Cari nomor pesanan atau PO" autocomplete="off">' +
+      '</form><span class="spacer"></span>' +
+      '<a class="tb-bell" href="#/pesanan" data-act="open-group" data-g="" aria-label="' + c.orders + ' pesanan perlu tindakan">' + ic('bell') + (c.orders ? '<span class="cnt">' + c.orders + '</span>' : '') + '</a>' +
+      '<a class="tb-avatar" href="#/pengaturan" aria-label="Pengaturan David"><span aria-hidden="true">D</span></a>';
+    tb.querySelector('#tbSearch').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var inp = $('#tbq'), v = inp.value.trim().toUpperCase();
+      if (!v) return;
+      if (orderById(v)) { go('pesanan/' + v); inp.value = ''; return; }
+      if (poById(v)) { go('po/' + v); inp.value = ''; return; }
+      toast('Tidak ditemukan: ' + v, 'err');
+    });
+  }
 
   // ---------- bar bawah (HP < 640px): dibuat sekali, sesudahnya hanya kelas aktif & lencana yang diubah ----------
   var TABS = [['beranda', 'Beranda', 'home'], ['pesanan', 'Pesanan', 'list'], ['po', 'Daftar PO', 'send'], ['katalog', 'Katalog', 'tag'], ['more', 'Lainnya', 'more']];
@@ -223,6 +246,7 @@
     }
     var m = $('#main'); m.innerHTML = '<div class="fade">' + html + '</div>';
     renderSide(sec);
+    renderTopbar();
     document.title = 'Dashboard David — DStore';
     if (sec === 'pesanan' && r[2] === 'harga') bindQuote();
     if (sec === 'pengaturan') mountSync();
@@ -275,8 +299,8 @@
     return '<span class="delta ' + (d > 0 ? 'up' : 'down') + '">' + (d > 0 ? 'Naik ' : 'Turun ') + amt +
       (c.pct != null ? ' (' + (c.pct > 0 ? '+' : '−') + dec1(Math.abs(c.pct)) + '%)' : '') + '</span>';
   }
-  function stat(label, value, sub, cmp, cls) {
-    return '<div class="stat"><div class="k">' + label + '</div><div class="v num' + (cls ? ' ' + cls : '') + '">' + value + '</div>' + (sub ? '<div class="sub">' + sub + '</div>' : '') + (cmp ? '<div class="cmp">' + cmp + '</div>' : '') + '</div>';
+  function stat(label, value, sub, cmp, cls, icon) {
+    return '<div class="stat">' + (icon ? '<div class="stat__ic">' + ic(icon) + '</div>' : '') + '<div class="k">' + label + '</div><div class="v num' + (cls ? ' ' + cls : '') + '">' + value + '</div>' + (sub ? '<div class="sub">' + sub + '</div>' : '') + (cmp ? '<div class="cmp">' + cmp + '</div>' : '') + '</div>';
   }
   function distLabel(k) { return k === '?' ? 'Distributor belum diketahui' : DS.distributorName(k); }
   function shortRp(n) { return n >= 1e6 ? dec1(n / 1e6) + ' jt' : n >= 1e3 ? Math.round(n / 1e3) + ' rb' : String(n); }
@@ -287,7 +311,8 @@
     var max = days.reduce(function (m, d) { return Math.max(m, d.omzet); }, 0);
     if (!max) return '';
     var step = Math.pow(10, Math.floor(Math.log(max) / Math.LN10)), top = Math.ceil(max / step) * step;
-    var iw = W - pl - pr, ih = Hh - pt - pb, bw = iw / days.length, g = '';
+    var iw = W - pl - pr, ih = Hh - pt - pb, bw = iw / days.length;
+    var g = '<defs><linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" class="gs-a"/><stop offset="100%" class="gs-b"/></linearGradient></defs>';
     [0, .5, 1].forEach(function (f) {
       var y = pt + ih - ih * f;
       g += '<line x1="' + pl + '" x2="' + (W - pr) + '" y1="' + y + '" y2="' + y + '" class="gl"/><text x="' + (pl - 6) + '" y="' + (y + 4) + '" text-anchor="end" class="ax">' + shortRp(top * f) + '</text>';
@@ -295,7 +320,7 @@
     var every = Math.ceil(days.length / Math.max(2, Math.floor(iw / 44)));
     days.forEach(function (d, k) {
       var h = d.omzet / top * ih, x = pl + k * bw, p = L.wibParts(d.start);
-      if (d.omzet > 0) g += '<rect x="' + (x + bw * .14) + '" y="' + (pt + ih - h) + '" width="' + Math.max(2, bw * .72) + '" height="' + h + '" class="bar"><title>' + p.d + ' ' + MON[p.m] + ': ' + rp(d.omzet) + '</title></rect>';
+      if (d.omzet > 0) g += '<rect x="' + (x + bw * .14) + '" y="' + (pt + ih - h) + '" width="' + Math.max(2, bw * .72) + '" height="' + h + '" rx="4" class="bar"><title>' + p.d + ' ' + MON[p.m] + ': ' + rp(d.omzet) + '</title></rect>';
       if (k % every === 0) g += '<text x="' + (x + bw / 2) + '" y="' + (Hh - 6) + '" text-anchor="middle" class="ax">' + p.d + '</text>';
     });
     return '<svg class="chart" viewBox="0 0 ' + W + ' ' + Hh + '" width="' + W + '" height="' + Hh + '" role="img" aria-label="Grafik omzet harian. Nilai tiap hari ada di tooltip batang.">' + g + '</svg>';
@@ -335,11 +360,11 @@
       var cmp = S.compare, none = c.orderCount === 0;
       var profitUnknown = c.profitBase === 0 && c.missingCostItems > 0;
       cards = '<div class="stats">' +
-        stat('Omzet', rp(c.omzet), none ? '0 pesanan lunas di periode ini' : 'tanpa ongkir', delta(cmp.omzet, S, 'rp')) +
-        stat('Untung kotor <span class="muted">(harga jual − harga distributor)</span>', profitUnknown ? '—' : rp(c.profit), c.missingCostItems ? 'belum lengkap: ' + c.missingCostItems + ' item belum ada harga distributor' : none ? 'belum ada penjualan' : 'belum dikurangi ongkir distributor', delta(cmp.profit, S, 'rp'), c.profit < 0 ? 'loss' : '') +
-        stat('Margin', pctTxt(c.margin), c.margin == null ? (none ? 'belum ada penjualan' : 'harga distributor belum tercatat') : 'untung ÷ omzet', delta(cmp.margin, S, 'pt')) +
-        stat('Pesanan lunas', String(c.orderCount), none ? '0 pesanan lunas' : '', delta(cmp.orders, S, 'n')) +
-        stat('Rata-rata nilai pesanan', c.avg == null ? '—' : rp(c.avg), c.avg == null ? 'belum ada pesanan lunas' : 'omzet ÷ pesanan lunas', delta(cmp.avg, S, 'rp')) + '</div>';
+        stat('Omzet', rp(c.omzet), none ? '0 pesanan lunas di periode ini' : 'tanpa ongkir', delta(cmp.omzet, S, 'rp'), '', 'wallet') +
+        stat('Untung kotor <span class="muted">(harga jual − harga distributor)</span>', profitUnknown ? '—' : rp(c.profit), c.missingCostItems ? 'belum lengkap: ' + c.missingCostItems + ' item belum ada harga distributor' : none ? 'belum ada penjualan' : 'belum dikurangi ongkir distributor', delta(cmp.profit, S, 'rp'), c.profit < 0 ? 'loss' : '', 'trending-up') +
+        stat('Margin', pctTxt(c.margin), c.margin == null ? (none ? 'belum ada penjualan' : 'harga distributor belum tercatat') : 'untung ÷ omzet', delta(cmp.margin, S, 'pt'), '', 'percent') +
+        stat('Pesanan lunas', String(c.orderCount), none ? '0 pesanan lunas' : '', delta(cmp.orders, S, 'n'), '', 'badge-check') +
+        stat('Rata-rata nilai pesanan', c.avg == null ? '—' : rp(c.avg), c.avg == null ? 'belum ada pesanan lunas' : 'omzet ÷ pesanan lunas', delta(cmp.avg, S, 'rp'), '', 'tag') + '</div>';
     }
 
     var chart = '';
@@ -620,7 +645,7 @@
     if (!o) return '<h1>Pesanan tidak ditemukan</h1>';
     var elig = L.eligibleUnits(o, d.pos);
     if (!wiz || wiz.orderId !== id) wiz = { orderId: id, step: 1, sel: {} };
-    var dists = DS.getDistributors();
+    var dists = DS.getDistributors().filter(function (x) { return x.is_active !== false; }); // ADM-04: distributor nonaktif tidak ditawarkan untuk PO baru
     var s = wiz.step;
     var head = '<a class="btn text" href="#/pesanan/' + esc(id) + '" data-act="wiz-exit">' + ic('back') + 'Kembali ke pesanan</a>' + pageHead('Buat PO — <span class="mono">' + esc(id) + '</span>') +
       '<div class="steps"><span class="' + (s === 1 ? 'on' : '') + '">1. Pilih item</span><span class="' + (s === 2 ? 'on' : '') + '">2. Pilih distributor</span><span class="' + (s === 3 ? 'on' : '') + '">3. Periksa & buat</span></div>';
@@ -729,18 +754,40 @@
   function pgDistributor() {
     var d = getData();
     var dl = DS.getDistributors();
-    if (!dl.length) return pageHead('Distributor') + '<div class="card calm">' + ic('info') + '<span>Belum ada distributor. Isi tab <span class="mono">distributors</span> di Google Sheet (kolom id, name, wa), lalu klik Tarik ulang di Pengaturan. Panduan: <span class="mono">prototype/gsheet/PANDUAN-ISI-DATA.md</span>.</span></div>';
-    return pageHead('Distributor') + '<div class="note info">' + ic('info') + '<div>Nomor WA yang kosong tampil <b>[?]</b> sampai David mengisinya. Pemetaan brand → distributor belum ada — distributor dipilih manual saat membuat PO.</div></div><div class="tablewrap"><table><thead><tr><th>Nama</th><th>Nomor WA</th><th>Catatan</th><th class="num">PO</th><th></th></tr></thead><tbody>' +
-      dl.map(function (x) { return '<tr><td><b>' + esc(x.name) + '</b></td><td class="mono">' + (x.wa ? esc(x.wa) : '[?] belum diisi') + '</td><td>' + esc(x.note || '—') + '</td><td class="num">' + d.pos.filter(function (p) { return p.distributor_id === x.id; }).length + '</td><td><button class="btn sm sec" data-act="edit-dist" data-id="' + esc(x.id) + '">Ubah</button></td></tr>'; }).join('') + '</tbody></table></div>';
+    var addBtn = '<button class="btn sm" type="button" data-act="add-dist">' + ic('store') + 'Tambah Distributor</button>';
+    if (!dl.length) return pageHead('Distributor', addBtn) + '<div class="card calm">' + ic('info') + '<span>Belum ada distributor. Tambah lewat tombol di atas, atau isi tab <span class="mono">distributors</span> di Google Sheet (kolom id, name, wa) lalu Tarik ulang di Pengaturan.</span></div>';
+    return pageHead('Distributor', addBtn) + '<div class="note info">' + ic('info') + '<div>Nomor WA yang kosong tampil <b>[?]</b> sampai David mengisinya. Distributor nonaktif tetap muncul di sini (riwayat PO lama tetap terbaca) tapi tidak lagi ditawarkan saat membuat PO baru. Pemetaan brand → distributor belum ada — distributor dipilih manual saat membuat PO.</div></div><div class="tablewrap"><table><thead><tr><th>Nama</th><th>Nomor WA</th><th>Catatan</th><th class="num">PO</th><th></th></tr></thead><tbody>' +
+      dl.map(function (x) {
+        var poCount = d.pos.filter(function (p) { return p.distributor_id === x.id; }).length;
+        return '<tr' + (x.is_active === false ? ' style="opacity:.55"' : '') + '><td><b>' + esc(x.name) + '</b>' + (x.is_active === false ? ' <span class="badge badge--neutral">Nonaktif</span>' : '') + '</td><td class="mono">' + (x.wa ? esc(x.wa) : '[?] belum diisi') + '</td><td>' + esc(x.note || '—') + '</td><td class="num">' + poCount + '</td><td class="row" style="gap:6px;flex-wrap:nowrap"><button class="btn sm sec" data-act="edit-dist" data-id="' + esc(x.id) + '">Ubah</button><button class="btn sm ' + (x.is_active === false ? '' : 'danger') + '" data-act="toggle-dist" data-id="' + esc(x.id) + '" data-to="' + (x.is_active === false ? '1' : '0') + '">' + (x.is_active === false ? 'Aktifkan' : 'Nonaktifkan') + '</button></td></tr>';
+      }).join('') + '</tbody></table></div>';
   }
+  // Harga Jual = Harga Distributor (p.price, modal) + margin. Margin: override produk (Dashboard > Katalog > Atur margin,
+  // disimpan ds_product_margin_v1) kalau ada, kalau tidak override dari kolom margin_type/margin_value di Sheet, kalau tidak
+  // default margin kategori (Pengaturan). priceFrom() sudah ada (dipakai juga untuk harga final per item pesanan).
   function catRows() {
     var C = window.DS_CATALOG; if (!C || !Array.isArray(C.products)) return null;
     var br = {}; (C.brands || []).forEach(function (b) { if (b && typeof b === 'object') br[b.id] = b.name; });
     var cat = {}; (C.categories || []).forEach(function (b) { if (b && typeof b === 'object') cat[b.id] = b.name; });
+    var margins = DS.getSettings().margins || {};
     return C.products.map(function (p) {
-      var price = p.est_price != null ? p.est_price : p.price != null ? p.price : p.price_est != null ? p.price_est : p.price_min != null ? p.price_min : (p.variants && p.variants[0] && (p.variants[0].est_price || p.variants[0].price)) || null;
-      return { name: p.name || p.title || '—', brand: br[p.brand] || p.brand_name || (typeof p.brand === 'string' ? p.brand : '—'), hidden: !brandVisible(br[p.brand] || p.brand_name || (typeof p.brand === 'string' ? p.brand : '')), cat: cat[p.category] || p.category_name || (typeof p.category === 'string' ? p.category : '—'), price: price };
+      var brandName = br[p.brand] || (typeof p.brand === 'string' ? p.brand : '—');
+      var catId = typeof p.category === 'string' ? p.category : '';
+      var cost = p.price != null ? p.price : null;
+      var ov = DS.getProductMargin(p.sku);
+      var mt = (ov && ov.margin_type) || p.margin_type || null, mv = ov ? ov.margin_value : (p.margin_value != null ? p.margin_value : null);
+      var usingDefault = !mt;
+      if (usingDefault) { mt = 'pct'; mv = margins[catId] != null ? margins[catId] : 0; }
+      return {
+        sku: p.sku, name: p.name || '—', brand: brandName, hidden: !brandVisible(brandName), cat: cat[catId] || catId || '—',
+        cost: cost, marginType: mt, marginValue: mv, usingDefault: usingDefault,
+        sell: cost != null ? L.priceFrom(cost, mt, mv) : null
+      };
     });
+  }
+  function marginLabel(r) {
+    if (r.usingDefault) return '<span class="badge badge--neutral">Default kategori (' + dec1(r.marginValue) + '%)</span>';
+    return '<span class="badge badge--info">' + dec1(r.marginValue) + (r.marginType === 'rp' ? ' Rp' : '%') + '</span>';
   }
   function pgKatalog() {
     var rows = catRows();
@@ -753,8 +800,30 @@
     if (!rows.length) return pageHead('Katalog', '', 'Hanya baca — isi produk di Google Sheet') + incHtml + (inc.length ? '' : '<div class="card calm">' + ic('tag') + '<span>Belum ada produk. Isi tab <span class="mono">products</span> di Google Sheet (urutan: categories, brands, distributors, products), lalu klik Tarik ulang di Pengaturan. Panduan: <span class="mono">prototype/gsheet/PANDUAN-ISI-DATA.md</span>.</span></div>');
     var q = catQuery.trim().toLowerCase();
     var list = rows.filter(function (r) { return !q || (r.name + ' ' + r.brand + ' ' + r.cat).toLowerCase().indexOf(q) >= 0; });
-    return pageHead('Katalog', '', 'Hanya baca — isi atau ubah produk di Google Sheet') + incHtml + '<div class="field" style="max-width:420px"><label class="f" for="cq">Cari produk</label><input id="cq" class="input" value="' + esc(catQuery) + '" data-input="cat-q"></div>' +
-      '<div class="tablewrap"><table><thead><tr><th>Produk</th><th>Brand</th><th>Kategori</th><th class="num">Harga est. (Rp)</th></tr></thead><tbody>' + list.slice(0, 300).map(function (r) { return '<tr><td>' + esc(r.name) + '</td><td>' + esc(r.brand) + (r.hidden ? ' <span class="badge badge--wait">Brand disembunyikan</span>' : '') + '</td><td>' + esc(r.cat) + '</td><td class="num">' + (r.price != null ? num(r.price) : '—') + '</td></tr>'; }).join('') + '</tbody></table></div>';
+    return pageHead('Katalog', '', 'Nama/foto/spesifikasi hanya bisa diubah di Google Sheet — margin bisa diatur langsung di sini') + incHtml + '<div class="field" style="max-width:420px"><label class="f" for="cq">Cari produk</label><input id="cq" class="input" value="' + esc(catQuery) + '" data-input="cat-q"></div>' +
+      '<div class="tablewrap"><table><thead><tr><th>Produk</th><th>Brand</th><th>Kategori</th><th class="num">Harga Distributor (Rp)</th><th>Margin</th><th class="num">Harga Jual (Rp)</th><th></th></tr></thead><tbody>' + list.slice(0, 300).map(function (r) {
+        return '<tr><td>' + esc(r.name) + '</td><td>' + esc(r.brand) + (r.hidden ? ' <span class="badge badge--wait">Brand disembunyikan</span>' : '') + '</td><td>' + esc(r.cat) + '</td><td class="num">' + (r.cost != null ? num(r.cost) : '—') + '</td><td>' + marginLabel(r) + '</td><td class="num"><b>' + (r.sell != null ? num(r.sell) : '—') + '</b></td><td><button class="btn sm sec" type="button" data-act="edit-margin" data-sku="' + esc(r.sku) + '">Atur margin</button></td></tr>';
+      }).join('') + '</tbody></table></div>';
+  }
+  function dlgMargin(sku) {
+    var rows = catRows() || [], r = rows.filter(function (x) { return x.sku === sku; })[0];
+    if (!r) return;
+    var ov = openModal({ title: 'Atur margin — ' + r.name, body:
+      '<p class="muted small">Harga Distributor (modal): <b class="num">' + (r.cost != null ? num(r.cost) : '—') + '</b></p>' +
+      '<div class="field"><span class="f">Tipe margin</span><div class="seg" role="group"><button type="button" data-mt="pct" aria-pressed="' + (r.marginType !== 'rp') + '">%</button><button type="button" data-mt="rp" aria-pressed="' + (r.marginType === 'rp') + '">Rp</button></div></div>' +
+      '<div class="field"><label class="f" for="mg-v">Nilai' + (r.usingDefault ? ' <span class="muted">(kosong = pakai default kategori)</span>' : '') + '</label><input id="mg-v" class="input num" inputmode="decimal" value="' + (r.usingDefault ? '' : String(r.marginValue).replace('.', ',')) + '"></div>' +
+      '<p class="hint">Harga Jual sekarang: <b class="num">' + (r.sell != null ? num(r.sell) : '—') + '</b></p>',
+      actions: [{ label: 'Batal', kind: 'sec' },
+        { label: 'Pakai default kategori', kind: 'sec', fn: function () { DS.setProductMargin(sku, null, null); toast('Margin dikembalikan ke default kategori.'); render(); } },
+        { label: 'Simpan', fn: function (ov2) {
+          var mt = $('[data-mt][aria-pressed="true"]', ov2).getAttribute('data-mt');
+          var vraw = $('#mg-v', ov2).value.trim();
+          if (!vraw) { DS.setProductMargin(sku, null, null); toast('Margin dikembalikan ke default kategori.'); render(); return; }
+          var v = mt === 'rp' ? digits(vraw) : decimal(vraw);
+          DS.setProductMargin(sku, mt, v); toast('Margin disimpan.'); render();
+        } }
+      ] });
+    $$('[data-mt]', ov).forEach(function (b) { b.addEventListener('click', function () { $$('[data-mt]', ov).forEach(function (x) { x.setAttribute('aria-pressed', x === b); }); }); });
   }
   function pgLaporan() {
     var d = getData(), by = {}, sum = { modal: 0, jual: 0 };
@@ -1018,7 +1087,7 @@
   }
   function dlgMove(poId, key) {
     var po = poById(poId);
-    openModal({ title: 'Pindahkan item ke distributor lain', body: '<div class="field"><label class="f" for="mv">Distributor tujuan</label><select id="mv" class="input">' + DS.getDistributors().filter(function (x) { return x.id !== po.distributor_id; }).map(function (x) { return '<option value="' + esc(x.id) + '">' + esc(x.name) + '</option>'; }).join('') + '</select></div>', actions: [{ label: 'Batal', kind: 'sec' }, { label: 'Pindahkan', fn: function (ov) { afterAction(A.movePoItem(poId, key, $('#mv', ov).value), 'Item dipindahkan.'); } }] });
+    openModal({ title: 'Pindahkan item ke distributor lain', body: '<div class="field"><label class="f" for="mv">Distributor tujuan</label><select id="mv" class="input">' + DS.getDistributors().filter(function (x) { return x.id !== po.distributor_id && x.is_active !== false; }).map(function (x) { return '<option value="' + esc(x.id) + '">' + esc(x.name) + '</option>'; }).join('') + '</select></div>', actions: [{ label: 'Batal', kind: 'sec' }, { label: 'Pindahkan', fn: function (ov) { afterAction(A.movePoItem(poId, key, $('#mv', ov).value), 'Item dipindahkan.'); } }] });
   }
   function dlgConfirmPo(poId) {
     var po = poById(poId), o = orderById(po.order_id), dd = L.dist(po.distributor_id), text = L.poConfirmText(po, o), s = DS.getSettings();
@@ -1200,8 +1269,33 @@
     },
     'edit-dist': function (el) {
       var id = el.getAttribute('data-id'), x = DS.getDistributors().filter(function (d) { return d.id === id; })[0];
-      openModal({ title: 'Ubah ' + x.name, body: '<div class="field"><label class="f" for="d-w">Nomor WhatsApp (format 62…)</label><input id="d-w" class="input" inputmode="tel" value="' + esc(x.wa) + '"></div><div class="field"><label class="f" for="d-n">Catatan</label><input id="d-n" class="input" value="' + esc(x.note) + '"></div>',
-        actions: [{ label: 'Batal', kind: 'sec' }, { label: 'Simpan', fn: function (ov) { var w = $('#d-w', ov).value.replace(/\D/g, ''); if (w.length < 10) { fieldErr(ov, 'Nomor WA minimal 10 angka.'); return false; } var s = DS.getSettings(); s.distributors[id] = { wa: w, note: $('#d-n', ov).value }; DS.saveSettings(s); toast('Distributor disimpan.'); render(); } }] });
+      openModal({ title: 'Ubah ' + x.name, body: '<div class="field"><label class="f" for="d-nm">Nama</label><input id="d-nm" class="input" value="' + esc(x.name) + '"></div><div class="field"><label class="f" for="d-w">Nomor WhatsApp (format 62…)</label><input id="d-w" class="input" inputmode="tel" value="' + esc(x.wa) + '"></div><div class="field"><label class="f" for="d-n">Catatan</label><input id="d-n" class="input" value="' + esc(x.note) + '"></div>',
+        actions: [{ label: 'Batal', kind: 'sec' }, { label: 'Simpan', fn: function (ov) {
+          var nm = $('#d-nm', ov).value.trim(); if (!nm) { fieldErr(ov, 'Nama wajib diisi.'); return false; }
+          var w = $('#d-w', ov).value.replace(/\D/g, ''); if (w.length < 10) { fieldErr(ov, 'Nomor WA minimal 10 angka.'); return false; }
+          var r = DS.upsertDistributor({ id: id, name: nm, wa: w, note: $('#d-n', ov).value });
+          if (!r.ok) { fieldErr(ov, r.error); return false; }
+          toast('Distributor disimpan.'); render();
+        } }] });
+    },
+    'add-dist': function () {
+      openModal({ title: 'Tambah Distributor', body: '<div class="field"><label class="f" for="d-nm">Nama</label><input id="d-nm" class="input" autofocus></div><div class="field"><label class="f" for="d-w">Nomor WhatsApp (format 62…)</label><input id="d-w" class="input" inputmode="tel"></div><div class="field"><label class="f" for="d-n">Catatan</label><input id="d-n" class="input"></div>',
+        actions: [{ label: 'Batal', kind: 'sec' }, { label: 'Tambah', fn: function (ov) {
+          var nm = $('#d-nm', ov).value.trim(); if (!nm) { fieldErr(ov, 'Nama wajib diisi.'); return false; }
+          var w = $('#d-w', ov).value.replace(/\D/g, ''); if (w && w.length < 10) { fieldErr(ov, 'Nomor WA minimal 10 angka, atau kosongkan.'); return false; }
+          var r = DS.upsertDistributor({ name: nm, wa: w, note: $('#d-n', ov).value });
+          if (!r.ok) { fieldErr(ov, r.error); return false; }
+          toast('Distributor ditambahkan.'); render();
+        } }] });
+    },
+    'edit-margin': function (el) { dlgMargin(el.getAttribute('data-sku')); },
+    'toggle-dist': function (el) {
+      var id = el.getAttribute('data-id'), active = el.getAttribute('data-to') === '1', x = DS.getDistributors().filter(function (d) { return d.id === id; })[0];
+      if (!x) return;
+      if (!active) {
+        openModal({ title: 'Nonaktifkan ' + x.name + '?', body: '<p>Distributor ini tidak akan ditawarkan lagi saat membuat PO baru. Riwayat PO yang sudah ada tetap terbaca dan bisa diaktifkan lagi kapan saja.</p>',
+          actions: [{ label: 'Batal', kind: 'sec' }, { label: 'Nonaktifkan', kind: 'danger', fn: function () { DS.setDistributorActive(id, false); toast('Distributor dinonaktifkan.'); render(); } }] });
+      } else { DS.setDistributorActive(id, true); toast('Distributor diaktifkan lagi.'); render(); }
     },
     'save-settings': function () {
       var s = DS.getSettings();
@@ -1250,7 +1344,7 @@
   function boot() { readHashFilter(); render(); }
   function softRender() { // data/sumber berubah: jangan merusak isian yang sedang diketik atau dialog yang terbuka
     var a = document.activeElement, typing = a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && $('#main').contains(a);
-    if (modalStack.length || typing) { renderSide(route()[0] || 'beranda'); return; }
+    if (modalStack.length || typing) { renderSide(route()[0] || 'beranda'); renderTopbar(); return; }
     render();
   }
   readHashFilter(); // sebelum render pertama apa pun (termasuk dari peristiwa data/sync)
