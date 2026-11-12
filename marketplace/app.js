@@ -348,7 +348,7 @@
   function card(p, i, feat) {
     var mulai = (p.price_to || p.price_from) ? '<small>mulai </small>' : '';
     return '<a class="card' + (feat ? ' card--feat' : '') + '" href="#/produk/' + p.slug + '" data-reveal style="--i:' + Math.min(i || 0, 8) + '" title="' + esc(p.brand + ' ' + p.name) + '">' +
-      '<div class="card__img">' + photo(p) + '<span class="chip-av">Via konfirmasi</span>' + (imgOf(p) ? '' : '<span class="foto">Foto segera</span>') + '</div>' +
+      '<div class="card__img">' + photo(p) + (imgOf(p) ? '' : '<span class="foto">Foto segera</span>') + '</div>' +
       '<div class="card__body"><div class="card__brand">' + esc(p.brand) + '</div><div class="card__name">' + esc(p.name) + '</div><div class="card__spec">' + esc(specLine(p)) + '</div>' +
       '<div class="card__price">' + mulai + priceHtml(p.price) + '</div><div class="card__est">' + priceNote(p) + ' · harga final dikonfirmasi</div></div></a>';
   }
@@ -579,7 +579,6 @@
       '<div class="pd__info"><div class="eyebrow">' + esc(p.brand) + '</div><h1>' + esc(p.name) + '</h1>' +
       '<div class="pd__price num">' + ((p.price_to || p.price_from) ? '<small style="font-family:var(--font-sans);font-size:14px;font-weight:500;color:var(--text-muted)">mulai </small>' : '') + priceHtml(p.price) + '</div>' +
       '<div class="pd__est">' + (p.price_status === 'P' ? 'Perkiraan kasar, belum ada harga pasti di Indonesia. ' : 'Harga estimasi. ') + 'Harga final dikonfirmasi setelah cek ketersediaan ke distributor.' + (p.price_to ? ' Kisaran di pasar sampai ' + rupiah(p.price_to) + '.' : '') + '</div>' +
-      '<p style="margin-top:12px"><span class="badge badge--info">' + ico('info') + 'Via konfirmasi</span> <span class="hint">dicek setelah Anda memesan</span></p>' +
       '<div id="opts"></div><div id="buy"></div>' +
       '<div style="margin-top:24px">' + (p.spec.length ? '<h2 style="font-size:16px;margin-bottom:4px">Spesifikasi</h2><table class="spec">' + p.spec.map(function (s) { return '<tr><th>' + esc(s[0]) + '</th><td>' + esc(s[1]) + '</td></tr>'; }).join('') + '</table><p class="hint" style="margin:6px 0 16px;font-size:13px">Spesifikasi dari riset awal, belum diverifikasi ke brand.</p>' : '') +
       '<details class="acc"><summary>Deskripsi' + ico('down') + '</summary><div class="acc__body">' + esc(p.brand + ' ' + p.name + ' — ' + catName(p.category) + '. ' + (p.note || 'Deskripsi lengkap menyusul dari David.')) + '</div></details>' +
@@ -943,6 +942,7 @@
     var cur = null, pub = pubOn();
     var NOKEY = 'Untuk keamanan, buka tautan Lacak dari WhatsApp atau dari halaman sukses pesanan. Pesanan tidak bisa dibuka hanya dengan nomor pesanan dan WhatsApp.';
     var NF = 'Pesanan tidak ditemukan. Periksa nomor pesanan dan nomor WhatsApp yang Anda pakai saat memesan.';
+    var NOTEL = 'Isi nomor WhatsApp yang dipakai saat memesan.';
     app.innerHTML = '<div class="container page"><h1 class="page__title" style="margin-bottom:16px">Lacak Pesanan</h1><div class="trk" id="trk"></div></div>';
     // pencarian: server (mode publik) atau penyimpanan lokal. -> Promise<{ok, order|message, network}>
     function lookup(id, wa) {
@@ -985,8 +985,9 @@
       return getOrders().filter(function (o) { return o.id.toUpperCase() === String(id).trim().toUpperCase() && normWa(o.customer && o.customer.wa) === normWa(wa); })[0];
     }
     function linkFormHtml(err) {
-      return '<form class="panel" id="tf" novalidate style="max-width:520px"><div class="form-grid"><p>Buka tautan Lacak yang dikirim David lewat WhatsApp atau yang tampil di halaman sukses pesanan. Atau tempel tautannya di sini.</p>' +
+      return '<form class="panel" id="tf" novalidate style="max-width:520px"><div class="form-grid"><p>Buka tautan Lacak yang dikirim David lewat WhatsApp atau yang tampil di halaman sukses pesanan. Tempel tautannya di sini, lalu isi nomor WhatsApp yang dipakai saat memesan.</p>' +
         '<div class="field"><label for="tlink">Tautan Lacak</label><input class="input" id="tlink" placeholder="https://…/marketplace/#/lacak?id=…&amp;k=…" autocomplete="off"></div>' +
+        '<div class="field"><label for="ttel">Nomor WhatsApp saat memesan</label><input class="input" id="ttel" type="tel" inputmode="tel" placeholder="0812 3456 7890" autocomplete="off" value="' + esc(qwa) + '"></div>' +
         (err ? '<div class="err" role="alert">' + ico('alert') + '<span>' + esc(err) + '</span></div>' : '') +
         '<button class="btn" type="submit">Buka Pesanan ' + ico('right', 'ico arrow') + '</button></div></form>';
     }
@@ -1004,6 +1005,9 @@
           e.preventDefault();
           var v = $('#tlink').value, i = v.indexOf('#/lacak?'), q = new URLSearchParams(i >= 0 ? v.slice(i + 8) : '');
           if (!q.get('id') || !q.get('k')) { showForm(NOKEY); return; }
+          var tel = $('#ttel').value.trim();
+          if (!tel) { showForm(NOTEL); return; }
+          q.set('wa', tel);
           location.hash = '#/lacak?' + q.toString();
         });
         return;

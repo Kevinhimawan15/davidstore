@@ -9,7 +9,7 @@
   --st-partial-fg:#A3361A; --st-partial-bg:#FCE9E2;
   --st-ok-fg:#1F6B3A; --st-ok-bg:#E6F2EA;
   --st-bad-fg:#B42318; --st-bad-bg:#FDECEA;
-  --bg:var(--n-50); --surface:var(--n-0); --surface-sunk:var(--n-100); --border:var(--n-200); --border-strong:var(--n-300);
+  --bg:var(--n-0); --surface:var(--n-0); --surface-sunk:var(--n-100); --border:var(--n-200); --border-strong:var(--n-300);
   --text:var(--n-900); --text-muted:var(--n-600); --link:var(--brand-700); --primary:var(--brand-700);
   --primary-hover:var(--brand-800); --on-primary:#FFFFFF; --focus-ring:var(--brand-500); --danger:var(--st-bad-fg);
   --font-sans:"IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;

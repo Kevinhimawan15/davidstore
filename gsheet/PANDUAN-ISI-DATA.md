@@ -65,7 +65,7 @@ Tab ini **tidak pernah** dikirim ke pengunjung toko.
 | `name` | **wajib** | nama produk | `Nama Produk Contoh` |
 | `category` | **wajib** | harus sama dengan `id` di tab `categories` | `blade` |
 | `brand_id` | **wajib** | harus sama dengan `id` di tab `brands` | `merk-contoh` |
-| `price` | **wajib** | harga estimasi, rupiah utuh. Boleh `1.250.000`, `1250000`, atau `Rp 1.250.000`. Tidak boleh kosong, nol, atau teks seperti "dua juta" | `1.250.000` |
+| `price` | **wajib** | harga estimasi, rupiah utuh. **Harga jual ke customer — sudah termasuk untung/margin David**, bukan harga modal/distributor. Boleh `1.250.000`, `1250000`, atau `Rp 1.250.000`. Tidak boleh kosong, nol, atau teks seperti "dua juta" | `1.250.000` |
 | `slug` | opsional | alamat halaman. Kosong = dibuat otomatis dari brand + nama | `merk-contoh-nama-produk-contoh` |
 | `price_to` | opsional | batas atas kisaran harga (angka) | `1.500.000` |
 | `price_from` | opsional | `TRUE` = toko menulis "mulai ..." | `FALSE` |
